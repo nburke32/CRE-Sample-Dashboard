@@ -1,0 +1,29 @@
+# Secrets - critical
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# IDE
+.cursor/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (CSVs, DBs, etc.)
+*.db
+*.sqlite
+*.csv
+
+# Parquet data store
+data_store/
+
+# Python cache in data folder
+data/__pycache__/
