@@ -54,7 +54,7 @@ def get_reit_sentiment():
         return pd.DataFrame()
 
 @st.cache_data
-def run_prophet_forecast(_metro_df: pd.DataFrame, indicator: str, periods: int):
+def run_prophet_forecast(_metro_df: pd.DataFrame, indicator: str, periods: int, metro_code: str):
     """Run Prophet forecast for a metro indicator."""
     from models.prophet_forecast import forecast_metro_indicator
     return forecast_metro_indicator(_metro_df, indicator, periods)
@@ -62,13 +62,13 @@ def run_prophet_forecast(_metro_df: pd.DataFrame, indicator: str, periods: int):
 @st.cache_data
 def calculate_market_scores(_metro_df: pd.DataFrame, _national_df: pd.DataFrame, _reit_df: pd.DataFrame, max_sentiment_adj: float = 0.20):
     """Calculate market strength scores with multiplicative sentiment."""
-    from models.xgboost_strength import score_all_metros
+    from models.market_scoring import score_all_metros
     return score_all_metros(_metro_df, _national_df, _reit_df, max_sentiment_adj=max_sentiment_adj)
 
 @st.cache_data
 def get_methodology():
     """Get scoring methodology details for display."""
-    from models.xgboost_strength import get_score_methodology
+    from models.market_scoring import get_score_methodology
     return get_score_methodology()
 
 # =============================================================================
@@ -98,11 +98,27 @@ with st.sidebar:
     # Check data status
     storage = DataStorage()
     data_status = []
+    stale_datasets = []
+
+    # Define staleness thresholds by data type
+    staleness_thresholds = {
+        "reit_prices": 3,      # Market data: 3 days (allows for weekends)
+        "fred_national": 30,   # Economic indicators: monthly updates
+        "fred_metros": 30      # Economic indicators: monthly updates
+    }
+
     for dataset in ["fred_national", "fred_metros", "reit_prices"]:
         if storage.dataset_exists(dataset):
             updated = storage.get_last_updated(dataset)
             if updated:
+                age_days = (datetime.now() - updated).days
                 data_status.append(f"✅ {dataset}: {updated.strftime('%m/%d %H:%M')}")
+
+                # Check if data is stale based on type-specific threshold
+                threshold = staleness_thresholds.get(dataset, 7)
+                if age_days > threshold:
+                    data_type = "REIT sentiment" if dataset == "reit_prices" else "Economic indicators"
+                    stale_datasets.append((dataset, age_days, threshold, data_type))
             else:
                 data_status.append(f"✅ {dataset}")
         else:
@@ -112,31 +128,34 @@ with st.sidebar:
     for status in data_status:
         st.caption(status)
 
+    # Show staleness warnings if needed
+    if stale_datasets:
+        for dataset, age_days, threshold, data_type in stale_datasets:
+            st.warning(f"⚠️ {dataset} is {age_days} days old (>{threshold} day threshold). {data_type} may be inaccurate. Consider refreshing data.")
+
     st.markdown("---")
 
     st.markdown("### 🎯 Analysis Type")
     analysis_type = st.selectbox(
         "Select Analysis",
-        ["Metro Forecast", "Market Rankings", "Value Opportunities", "REIT Sentiment", "Economic Overview"]
+        ["Economic Overview", "Market Rankings", "Metro Forecast", "REIT Sentiment", "Value Opportunities"]
     )
 
     st.markdown("---")
 
     if analysis_type == "Metro Forecast":
-        st.markdown("### 📍 Metro Selection")
-        selected_metro = st.selectbox(
-            "Select Metro",
-            options=list(METROS.keys()),
-            format_func=lambda x: f"{x} - {METROS[x]['name']}"
-        )
-
         st.markdown("### 📈 Forecast Settings")
         forecast_periods = st.slider("Months Ahead", 3, 24, 12)
         forecast_indicator = st.selectbox(
             "Indicator to Forecast",
-            ["hpi", "employment", "unemployment"],
-            format_func=lambda x: {"hpi": "House Price Index", "employment": "Employment", "unemployment": "Unemployment Rate"}[x]
+            ["hpi", "unemployment"],
+            format_func=lambda x: {"hpi": "House Price Index", "unemployment": "Unemployment Rate"}[x]
         )
+
+        st.markdown("### 📍 Metro Selection")
+
+        # Filter metros based on available data for selected indicator
+        # This happens after data is loaded, so we'll do the filtering in the main section
 
     elif analysis_type == "Market Rankings":
         st.markdown("### ⚖️ Sentiment Settings")
@@ -146,11 +165,13 @@ with st.sidebar:
             max_value=50,
             value=20,
             step=5,
-            help="Maximum % adjustment that REIT sentiment can apply to base scores. "
-                 "Higher values = more weight on forward-looking market signals. "
+            help="Maximum magnitude (ceiling) of sentiment adjustment. REIT momentum determines the direction:\n"
+                 "• Positive REIT momentum = scores multiplied by (1 + X%)\n"
+                 "• Negative REIT momentum = scores multiplied by (1 - X%)\n"
+                 "• Set to 0% to disable sentiment adjustment entirely.\n"
                  "Recommended range: 10-30%."
         )
-        st.caption(f"Scores adjusted by ±{max_sentiment_pct}% max based on REIT momentum")
+        st.caption(f"⚖️ Sentiment range: ±{max_sentiment_pct}% maximum (direction set by REIT market momentum)")
 
 # =============================================================================
 # MAIN CONTENT
@@ -178,6 +199,28 @@ st.markdown("---")
 # =============================================================================
 
 if analysis_type == "Metro Forecast":
+    # Filter metros that have data for the selected indicator
+    available_metros = []
+    for metro_code in METROS.keys():
+        metro_data_check = metros_df[metros_df["metro_code"] == metro_code]
+        if not metro_data_check.empty and forecast_indicator in metro_data_check.columns:
+            if metro_data_check[forecast_indicator].notna().sum() > 0:
+                available_metros.append(metro_code)
+
+    # Show metro selector with only available metros
+    if not available_metros:
+        st.error(f"No metros have {forecast_indicator} data available.")
+        st.stop()
+
+    selected_metro = st.selectbox(
+        "Select Metro",
+        options=available_metros,
+        format_func=lambda x: f"{x} - {METROS[x]['name']}",
+        key="metro_forecast_selector"
+    )
+
+    st.caption(f"Showing {len(available_metros)} of {len(METROS)} top metros by population with {forecast_indicator} data")
+
     st.markdown(f"### 📍 {METROS[selected_metro]['name']} Forecast")
 
     # Get metro data
@@ -190,7 +233,7 @@ if analysis_type == "Metro Forecast":
     # Check if indicator is available
     if forecast_indicator not in metro_data.columns or metro_data[forecast_indicator].isna().all():
         st.warning(f"No {forecast_indicator} data available for {selected_metro}. Try a different indicator.")
-        available = [c for c in ["hpi", "employment", "unemployment"] if c in metro_data.columns and not metro_data[c].isna().all()]
+        available = [c for c in ["hpi", "unemployment"] if c in metro_data.columns and not metro_data[c].isna().all()]
         st.info(f"Available indicators: {', '.join(available) if available else 'None'}")
         st.stop()
 
@@ -198,7 +241,7 @@ if analysis_type == "Metro Forecast":
     with st.spinner("Running Prophet forecast..."):
         try:
             forecast_result, metrics = run_prophet_forecast(
-                metro_data, forecast_indicator, forecast_periods
+                metro_data, forecast_indicator, forecast_periods, selected_metro
             )
         except Exception as e:
             st.error(f"Forecast error: {e}")
@@ -277,14 +320,161 @@ if analysis_type == "Metro Forecast":
         col1, col2, col3, col4 = st.columns(4)
 
         if metrics:
-            col1.metric("Current Value", f"{metrics['current_value']:.1f}")
-            col2.metric(
-                f"{forecast_periods}mo Forecast",
-                f"{metrics['forecast_end']:.1f}",
-                f"{metrics['pct_change']:+.1f}%"
-            )
-            col3.metric("Lower Bound", f"{metrics['forecast_lower']:.1f}")
-            col4.metric("Upper Bound", f"{metrics['forecast_upper']:.1f}")
+            # Determine precision and delta color based on indicator
+            if forecast_indicator == "unemployment":
+                precision = 2  # More precision for unemployment (small changes matter)
+                delta_color = "inverse"  # Rising unemployment = bad = red
+                # For unemployment, show absolute change in percentage points
+                absolute_change = metrics['forecast_end'] - metrics['current_value']
+                delta_str = f"{absolute_change:+.2f} pp"  # percentage points
+            else:
+                precision = 1
+                delta_color = "normal"  # Rising HPI = good = green
+                delta_str = f"{metrics['pct_change']:+.1f}%"
+
+            with col1:
+                st.metric("Current Value", f"{metrics['current_value']:.{precision}f}")
+            with col2:
+                st.metric(
+                    f"{forecast_periods}mo Forecast",
+                    f"{metrics['forecast_end']:.{precision}f}",
+                    delta_str,
+                    delta_color=delta_color
+                )
+            with col3:
+                st.metric("Lower Bound (95% CI)", f"{metrics['forecast_lower']:.{precision}f}")
+            with col4:
+                st.metric("Upper Bound (95% CI)", f"{metrics['forecast_upper']:.{precision}f}")
+
+        # Add explanatory note for HPI
+        if forecast_indicator == "hpi" and metrics:
+            current_hpi = metrics.get('current_value', 437)
+            base_hpi = 100
+            multiplier = current_hpi / base_hpi
+            pct_increase = (current_hpi - base_hpi) / base_hpi * 100
+
+            # Calculate realistic example prices
+            example_price_1995 = 160000
+            example_price_today = example_price_1995 * multiplier
+
+            with st.expander("📊 Understanding the House Price Index (HPI)", expanded=False):
+                st.markdown(f"""
+                **What is HPI?**
+
+                The House Price Index is a **relative index**, not a dollar amount. It measures price changes over time compared to a baseline.
+
+                **How to Read It:**
+
+                - **Base Period = 100** (1995 Q1 for FHFA data)
+                - **HPI = {current_hpi:.0f}** means prices are {multiplier:.2f}× higher than the base period
+                - This represents a {pct_increase:.0f}% increase from the baseline
+
+                **What Matters Most:**
+
+                Focus on the **growth rate** (e.g., {metrics.get('pct_change', 0):+.1f}%) rather than the absolute number. The growth rate indicates market strength and momentum.
+
+                **Example:**
+
+                If a home cost **\${example_price_1995:,.0f}** in 1995 (HPI = 100), at today's HPI of {current_hpi:.0f}, that same home would cost approximately **\${example_price_today:,.0f}**.
+                """)
+
+        # Add explanatory note for Unemployment Rate
+        if forecast_indicator == "unemployment" and metrics:
+            current_rate = metrics.get('current_value', 0)
+            forecast_rate = metrics.get('forecast_end', 0)
+            change = metrics.get('pct_change', 0)
+
+            with st.expander("📊 Understanding Unemployment Rate", expanded=False):
+                st.markdown(f"""
+                **What is the Unemployment Rate?**
+
+                The unemployment rate measures the percentage of the labor force that is actively seeking employment but unable to find work. It's a key indicator of economic health and labor market conditions.
+
+                **How to Read It:**
+
+                - **Current Rate = {current_rate:.1f}%** means {current_rate:.1f}% of the labor force is unemployed
+                - **Forecasted Rate = {forecast_rate:.1f}%** ({change:+.1f}% change over forecast period)
+                - **~4-5%** is generally considered "full employment" (natural rate)
+                - **Below 4%** indicates a very tight labor market
+                - **Above 6%** typically signals economic weakness
+
+                **Why It Matters for CRE:**
+
+                - **Office & Retail**: Low unemployment → more employed workers → higher demand for office space and consumer spending
+                - **Multifamily**: Employment levels directly impact rental demand and tenant quality
+                - **Economic Indicator**: Rising unemployment often precedes recessions, affecting all CRE sectors
+
+                **What Matters Most:**
+
+                Focus on the **direction and rate of change** rather than the absolute level. Rapidly rising unemployment signals economic distress, while declining unemployment indicates economic strength.
+
+                **Interpreting the Forecast:**
+
+                {"📉 **Declining unemployment** suggests strengthening labor market conditions, which generally supports CRE demand." if change < 0 else "📈 **Rising unemployment** may indicate softening economic conditions, potentially weakening CRE fundamentals." if change > 0 else "➡️ **Stable unemployment** suggests steady labor market conditions."}
+                """)
+
+        # Data Limitations expander
+        with st.expander("⚠️ Data Coverage & Limitations", expanded=False):
+            st.markdown("""
+            **Metro Coverage**
+
+            This dashboard uses publicly available data from FRED (Federal Reserve Economic Data) and covers 20 major U.S. metropolitan areas selected by:
+            - **Population size**: Top 20 MSAs by population (2020 Census)
+            - **Economic significance**: Major commercial real estate markets
+            - **Data availability**: FRED API coverage
+
+            **Current Data Status**
+
+            - ✅ **13 metros with HPI data**: NYC, LAX, CHI, DFW, HOU, WAS, MIA, PHI, ATL, PHX, BOS, SFO, MSP
+            - ✅ **14 metros with unemployment data**: All above + SEA
+            - ❌ **6 metros with limited/no data**: DEN, SAN, AUS, NSH, CLT, RDU
+
+            **Why Some Metros Are Missing**
+
+            1. **FRED API Limitations**: Not all metros have FHFA HPI series in FRED
+            2. **Data Lag**: Smaller/newer metros may have shorter history or delayed reporting
+            3. **Series Changes**: Some metros use different identifier codes or consolidated series
+
+            **Design Approach: Population-First vs. Data-First**
+
+            **Our Approach (Population-First):**
+            - Selected top 20 metros by population (2020 Census)
+            - Assumed FRED would have data for major markets
+            - Result: 6 metros (30%) have missing/incomplete data
+
+            **Alternative Approach (Data-First):**
+            - Query FRED API to discover available FHFA HPI series
+            - Select top N metros from those with complete data
+            - Prioritize by population + CRE significance among available metros
+            - Result: 100% data coverage, but potentially excluding some top-20 markets
+
+            **Trade-offs:**
+            - Population-first shows data gaps transparently (our choice)
+            - Data-first ensures functionality but may miss important markets
+            - Production systems typically use data-first to guarantee reliability
+
+            The population-first approach better demonstrates real-world data engineering challenges: requirements don't always match data availability.
+
+            **What We'd Want vs. What We Have**
+
+            | Data Type | Ideal | Current | Gap |
+            |-----------|-------|---------|-----|
+            | Metro Coverage | All top 50 MSAs | 14-20 MSAs | Smaller markets unavailable |
+            | HPI Frequency | Monthly | Quarterly | 2-month lag between updates |
+            | Update Speed | Real-time | 1-2 quarters lag | FHFA reporting delay |
+            | REIT Data | Daily | Daily | ✅ No gap |
+            | Unemployment | Monthly | Monthly | ✅ No gap |
+
+            **Portfolio Transparency Note**
+
+            This is a **portfolio demonstration project** using free, publicly available data. In a work setting, I would:
+            1. Negotiate paid API access for comprehensive coverage
+            2. Build data pipelines to handle missing data gracefully
+            3. Document data quality metrics and coverage reports
+            4. Set up monitoring for data freshness and completeness
+
+            The focus here is demonstrating **analytical methodology** and **system architecture**, not perfect data coverage.
+            """)
 
     else:
         st.warning("Could not generate forecast. Check that Prophet is installed.")
@@ -309,20 +499,28 @@ elif analysis_type == "Market Rankings":
             sentiment = {}
 
     if not scores.empty:
+        # Show data coverage info
+        scored_metros = len(scores)
+        total_metros = len(METROS)
+        if scored_metros < total_metros:
+            missing = set(METROS.keys()) - set(scores["metro_code"].unique())
+            st.info(f"ℹ️ Scoring {scored_metros} of {total_metros} metros. Missing: {', '.join(sorted(missing))} (insufficient data for growth rate calculations)")
+
         # Sentiment indicator
         composite_sentiment = sentiment.get("composite", 0)
         sentiment_pct = composite_sentiment * max_sentiment_pct  # User-selected max adjustment
 
         st.markdown("#### 📊 Current Market Sentiment")
-        sent_col1, sent_col2, sent_col3 = st.columns([1, 2, 1])
 
-        with sent_col1:
+        # Main sentiment metric
+        sent_metric_col1, sent_metric_col2 = st.columns([1, 3])
+        with sent_metric_col1:
             if sentiment_pct >= 0:
                 st.metric("REIT Sentiment", "Positive", f"+{sentiment_pct:.1f}%")
             else:
                 st.metric("REIT Sentiment", "Negative", f"{sentiment_pct:.1f}%")
 
-        with sent_col2:
+        with sent_metric_col2:
             # Sentiment gauge
             sentiment_desc = (
                 "Strong bullish signal from REITs" if sentiment_pct > 10 else
@@ -331,15 +529,9 @@ elif analysis_type == "Market Rankings":
                 "Moderately negative outlook" if sentiment_pct > -10 else
                 "Strong bearish signal from REITs"
             )
-            st.info(f"**Formula:** Final Score = Base Score × (1 + {sentiment_pct:+.1f}%)")
+            st.info(f"**Formula:** Final Score = Base Score × (1 {sentiment_pct:+.1f}%)")
             st.caption(sentiment_desc)
-
-        with sent_col3:
-            st.caption("Sector Returns (30d)")
-            for key, value in sentiment.items():
-                if key.startswith("sector_"):
-                    sector_name = key.replace("sector_", "").title()
-                    st.caption(f"  {sector_name}: {value:+.1f}%")
+            st.caption("ℹ️ This composite sentiment is applied uniformly to ALL metros. Scores are relative rankings (0-100 scale).")
 
         st.markdown("---")
 
@@ -365,7 +557,8 @@ elif analysis_type == "Market Rankings":
             st.dataframe(bottom_5, hide_index=True, use_container_width=True)
 
         # Chart tabs
-        chart_df = scores.sort_values("strength_score", ascending=True).copy()
+        # Sort by rank descending (rank 1 at top of horizontal chart) to maintain tie-breaking order
+        chart_df = scores.sort_values("rank", ascending=False).copy()
 
         chart_tab1, chart_tab2 = st.tabs(["Final Scores", "Score Breakdown"])
 
@@ -425,13 +618,13 @@ elif analysis_type == "Market Rankings":
                     fig2.add_trace(go.Bar(
                         y=chart_df["metro_code"],
                         x=chart_df["sentiment_contribution"],
-                        name="Sentiment Boost",
+                        name="Sentiment Adjustment (uncapped)",
                         orientation="h",
                         marker_color="forestgreen",
                         text=chart_df["sentiment_contribution"].apply(lambda x: f"+{x:.1f}"),
                         textposition="outside"
                     ))
-                    fig2.update_layout(barmode="stack")
+                    fig2.update_layout(barmode="stack", legend=dict(traceorder="normal"))
                 else:
                     # Negative sentiment: show final score (blue) + drag amount (red) to show what was lost
                     # Final score is base_score + sentiment_contribution (where contribution is negative)
@@ -451,7 +644,7 @@ elif analysis_type == "Market Rankings":
                     fig2.add_trace(go.Bar(
                         y=chart_df["metro_code"],
                         x=drag_amount,
-                        name="Sentiment Drag (lost)",
+                        name="Sentiment Adjustment (uncapped)",
                         orientation="h",
                         marker_color="indianred",
                         marker_opacity=0.7,
@@ -536,7 +729,24 @@ elif analysis_type == "Market Rankings":
             imputed_metros = scores[scores["imputed_count"] > 0]
             if not imputed_metros.empty:
                 with st.expander("⚠️ Data Quality Notes"):
-                    st.warning(f"{len(imputed_metros)} metros have imputed values (median used for missing data)")
+                    st.warning(f"⚠️ **Ranking Reliability Issue**: {len(imputed_metros)} metros have imputed (estimated) values for missing data")
+
+                    st.markdown("""
+                    **What this means:**
+                    - Missing fundamental data (HPI growth, population growth, etc.) was filled with median values from other metros
+                    - Scores for these metros are based partly on real data and partly on estimates
+                    - Rankings may be **inaccurate** - metros with imputed data are artificially pushed toward average scores
+                    - The final ranking might be correct, but it's not based on complete real data
+
+                    **Why this happens:**
+                    - FRED data coverage is incomplete for some metros (quarterly HPI lags, annual population updates)
+                    - Imputation keeps all top-20 metros visible, but transparency about data quality is critical
+
+                    **Recommendation:**
+                    - Treat rankings for metros with high imputation counts (2-3+) as **directional only**
+                    - Focus on metros with 0 imputed values for most reliable comparisons
+                    """)
+
                     st.dataframe(
                         imputed_metros[["metro_code", "metro_name", "imputed_count"]],
                         hide_index=True,
@@ -546,6 +756,10 @@ elif analysis_type == "Market Rankings":
         # Methodology explanation
         with st.expander("📖 Scoring Methodology"):
             methodology = get_methodology()
+
+            st.markdown("**Model:** Rule-Based Scoring (NOT machine learning)")
+            st.markdown("Weighted scoring of fundamentals with REIT sentiment adjustment")
+            st.markdown("")
 
             st.markdown(f"**Approach:** {methodology['approach']}")
             st.markdown(f"**Formula:** `{methodology['formula']}`")
@@ -565,6 +779,222 @@ elif analysis_type == "Market Rankings":
                 st.markdown("##### Data Sources & Notes")
                 for note in methodology["data_notes"]:
                     st.caption(f"  • {note}")
+
+        # Enhanced sentiment breakdown at bottom with time-travel
+        st.markdown("---")
+        st.markdown("### 🎯 REIT Sentiment Deep Dive")
+
+        with st.expander("🔍 Sentiment Calculation Breakdown & Time Travel", expanded=False):
+            st.markdown("**Explore how individual REIT sector returns combine into the composite sentiment**")
+            st.markdown("This composite is applied uniformly to ALL metros, not metro-specific.")
+
+            # Time travel controls
+            st.markdown("#### ⏰ Time Travel: Rewind REIT Momentum")
+
+            if reit_df is not None and not reit_df.empty:
+                latest_date = reit_df["date"].max()
+                earliest_date = reit_df["date"].min()
+
+                # Initialize session state for reset counter (forces widget recreation)
+                if "time_travel_reset_counter" not in st.session_state:
+                    st.session_state["time_travel_reset_counter"] = 0
+
+                time_travel_col1, time_travel_col2 = st.columns([3, 1])
+
+                with time_travel_col2:
+                    if st.button("↻ Reset to Current", use_container_width=True):
+                        st.session_state["time_travel_reset_counter"] += 1
+                        st.rerun()
+
+                with time_travel_col1:
+                    # Use unique key that changes on reset to force widget recreation
+                    selected_end_date = st.date_input(
+                        "Select end date for 30-day momentum window",
+                        value=latest_date,
+                        min_value=earliest_date + timedelta(days=30),
+                        max_value=latest_date,
+                        key=f"sentiment_time_travel_picker_{st.session_state['time_travel_reset_counter']}",
+                        help="Choose any historical date to see how sentiment was calculated at that time"
+                    )
+
+                # Convert to datetime
+                selected_end_datetime = pd.Timestamp(selected_end_date)
+                lookback_start_date = selected_end_datetime - timedelta(days=30)
+
+                st.caption(f"📅 Analyzing REIT momentum from **{lookback_start_date.date()}** to **{selected_end_datetime.date()}**")
+
+                # Recalculate sentiment for selected time window
+                from models.market_scoring import CRE_SECTOR_WEIGHTS
+
+                time_travel_reit = reit_df[
+                    (reit_df["date"] >= lookback_start_date) &
+                    (reit_df["date"] <= selected_end_datetime)
+                ]
+
+                if not time_travel_reit.empty:
+                    # Calculate sector returns for time window
+                    sector_breakdown = []
+                    total_weighted_return = 0
+                    total_weight = 0
+                    positive_sectors = []
+                    negative_sectors = []
+
+                    for sector_key, weight in CRE_SECTOR_WEIGHTS.items():
+                        sector_data = time_travel_reit[time_travel_reit["sector"] == sector_key]
+                        if not sector_data.empty:
+                            avg_daily = sector_data["pct_change"].mean()
+                            cumulative_return = avg_daily * min(30, len(sector_data))
+                            weighted_contribution = cumulative_return * weight
+                            total_weighted_return += weighted_contribution
+                            total_weight += weight
+
+                            sector_breakdown.append({
+                                "Sector": sector_key.replace("_", " ").title(),
+                                "Weight": weight,
+                                "Weight_Display": f"{weight*100:.0f}%",
+                                "30d Return": cumulative_return,
+                                "Return_Display": f"{cumulative_return:+.2f}%",
+                                "Contribution": weighted_contribution,
+                                "Contribution_Display": f"{weighted_contribution:+.2f}%"
+                            })
+
+                            if cumulative_return >= 0:
+                                positive_sectors.append(sector_key.replace("_", " ").title())
+                            else:
+                                negative_sectors.append(sector_key.replace("_", " ").title())
+
+                    if sector_breakdown:
+                        st.markdown("---")
+
+                        # Header with composite metric in upper right
+                        breakdown_header_col1, breakdown_header_col2 = st.columns([2, 1])
+
+                        with breakdown_header_col1:
+                            st.markdown("#### 📊 Visual Sector Breakdown")
+
+                        with breakdown_header_col2:
+                            composite_contribution = total_weighted_return
+                            # Display composite total as a metric
+                            if composite_contribution >= 0:
+                                st.metric("🎯 Composite Total", f"+{composite_contribution:.2f}%", help="Sum of all weighted sector contributions")
+                            else:
+                                st.metric("🎯 Composite Total", f"{composite_contribution:.2f}%", help="Sum of all weighted sector contributions")
+
+                        # Create gauge chart for each sector
+                        import plotly.graph_objects as go
+
+                        fig = go.Figure()
+
+                        # Add individual sector bars
+                        for i, sector_data in enumerate(sector_breakdown):
+                            contribution = sector_data["Contribution"]
+                            sector_name = sector_data["Sector"]
+                            weight = sector_data["Weight"]
+
+                            # Create horizontal bar showing contribution
+                            color = "green" if contribution >= 0 else "red"
+                            fig.add_trace(go.Bar(
+                                y=[sector_name],
+                                x=[contribution],
+                                orientation='h',
+                                marker_color=color,
+                                text=f"{contribution:+.2f}%",
+                                textposition='outside',
+                                name=sector_name,
+                                hovertemplate=f"<b>{sector_name}</b><br>Weight: {weight*100:.0f}%<br>Contribution: {contribution:+.2f}%<extra></extra>"
+                            ))
+
+                        fig.update_layout(
+                            title="Individual Sector Contributions",
+                            xaxis_title="Contribution (%)",
+                            yaxis_title="",
+                            showlegend=False,
+                            height=400,
+                            xaxis=dict(zeroline=True, zerolinewidth=2, zerolinecolor='gray')
+                        )
+
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # Sector summary
+                        st.markdown("#### 📋 Sector Details")
+                        breakdown_display = pd.DataFrame([{
+                            "Sector": s["Sector"],
+                            "Weight": s["Weight_Display"],
+                            "30d Return": s["Return_Display"],
+                            "Contribution": s["Contribution_Display"]
+                        } for s in sector_breakdown])
+                        st.dataframe(breakdown_display, use_container_width=True, hide_index=True)
+
+                        # Mixed sector explanation
+                        st.markdown("---")
+                        st.markdown("#### 🔄 Understanding Mixed Positive/Negative Sectors")
+
+                        pos_count = len(positive_sectors)
+                        neg_count = len(negative_sectors)
+
+                        if pos_count > 0 and neg_count > 0:
+                            st.info(f"""
+                            **Mixed Market Detected:** {pos_count} positive sectors, {neg_count} negative sectors
+
+                            - **Positive:** {', '.join(positive_sectors)}
+                            - **Negative:** {', '.join(negative_sectors)}
+
+                            When sectors are mixed, positive and negative returns **offset each other** in the weighted average.
+                            The composite sentiment reflects the **net effect** based on sector weights.
+                            """)
+                        elif neg_count == 0:
+                            st.success(f"**All sectors positive** during this period ({pos_count} sectors)")
+                        else:
+                            st.error(f"**All sectors negative** during this period ({neg_count} sectors)")
+
+                        st.markdown("---")
+                        st.markdown("#### 🧮 Calculation Steps")
+
+                        # Step 1: Weighted average
+                        avg_return = total_weighted_return / total_weight if total_weight > 0 else 0
+                        st.caption(f"**Step 1 - Weighted Average Return:** {avg_return:+.2f}%")
+                        st.caption(f"  → Sum of all contributions: {total_weighted_return:+.2f}%")
+                        st.caption(f"  → Divided by total weight: {total_weight:.2f}")
+
+                        # Step 2: Normalization
+                        normalized = np.clip(avg_return / 10.0, -1.0, 1.0)
+                        st.caption(f"**Step 2 - Normalize to [-1, +1]:** {normalized:+.3f}")
+                        st.caption(f"  → Divide by 10% (typical monthly REIT range): {avg_return:+.2f}% ÷ 10% = {normalized:+.3f}")
+                        st.caption(f"  → Clipped to [-1, +1] range")
+
+                        # Step 3: Apply max adjustment
+                        final_sentiment_pct = normalized * max_sentiment_pct
+                        st.caption(f"**Step 3 - Apply Max Adjustment:** {final_sentiment_pct:+.1f}%")
+                        st.caption(f"  → Multiply by user slider setting: {normalized:+.3f} × {max_sentiment_pct:.0f}% = {final_sentiment_pct:+.1f}%")
+
+                        st.markdown("---")
+                        st.success(f"""
+                        ✨ **Final Result:** All metro scores are multiplied by **(1 {final_sentiment_pct:+.1f}%)**
+
+                        - A metro with base_score of 80 becomes: 80 × (1 {final_sentiment_pct:+.1f}%) = {80 * (1 + final_sentiment_pct/100):.1f}
+                        - This adjustment is **uniform across all metros** (not metro-specific)
+                        - Negative sentiment reduces all scores proportionally
+                        - Positive sentiment boosts all scores proportionally
+                        """)
+
+                        # Key insights
+                        st.markdown("#### 💡 Key Insights")
+                        st.markdown("""
+                        **How the mechanism works:**
+                        - **Sector weights** determine importance (e.g., Broad Market 25%, Industrial 20%)
+                        - **Positive sectors** contribute positive momentum to composite
+                        - **Negative sectors** contribute negative momentum to composite
+                        - **Mixed markets** produce net sentiment based on weighted balance
+                        - **Slider setting** (0-50%) controls maximum magnitude, not direction
+                        - **REIT momentum** determines direction (positive/negative), not the slider
+                        - Setting slider to **0% disables sentiment** entirely
+                        """)
+                    else:
+                        st.warning("No sector data available for selected time window.")
+                else:
+                    st.warning("No REIT data available for selected time window. Try a more recent date.")
+            else:
+                st.warning("No REIT data loaded. Click 'Refresh Data' in the sidebar.")
 
     else:
         st.warning("Could not calculate market scores. Try refreshing the data.")
@@ -1295,20 +1725,14 @@ st.markdown("---")
 # FOOTER
 # =============================================================================
 
-with st.expander("ℹ️ About This Model"):
+with st.expander("ℹ️ About This Dashboard"):
     st.markdown("""
     **Data Sources:**
     - **FRED** (Federal Reserve Economic Data): Employment, housing prices, interest rates, economic indicators
     - **YFinance**: REIT prices for sector sentiment analysis
 
-    **Scoring Methodology:**
-    - **Base Score (Backward-Looking)**: Weighted combination of HPI growth, employment growth, and unemployment trends
-    - **Sentiment Adjustment (Forward-Looking)**: REIT sector momentum over 30 days, weighted by CRE relevance
-    - **Final Score**: `Base × (1 + Sentiment)`, clamped to 0-100
-
-    **Models:**
-    - **Prophet**: Time-series forecasting for metro-level indicators with seasonality
-    - **Market Strength**: Multiplicative sentiment-adjusted scoring (inspired by Bayesian updating)
+    **Metro Forecast Model:**
+    - Prophet (Facebook's time-series forecasting model) for individual metro HPI and unemployment rate predictions
 
     **Metros Covered:** 20 major CRE markets across 6 regions (Northeast, Southeast, Midwest, Southwest, West, Mid-Atlantic)
 

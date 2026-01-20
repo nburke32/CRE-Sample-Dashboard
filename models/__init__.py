@@ -1,2 +1,2 @@
 from .prophet_forecast import ProphetForecaster
-from .xgboost_strength import MarketStrengthModel
+from .market_scoring import MarketStrengthModel

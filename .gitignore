@@ -27,3 +27,12 @@ data_store/
 
 # Python cache in data folder
 data/__pycache__/
+
+# Tests (keeping private for now)
+tests/
+TEST_RESULTS.md
+BUG_REPORT.md
+REAL_DATA_TESTING_REPORT.md
+MANUAL_TESTING_CHECKLIST.md
+FIXES_APPLIED.md
+FINAL_SUMMARY.md

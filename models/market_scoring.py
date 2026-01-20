@@ -1,9 +1,13 @@
 """
-XGBoost-based market strength scoring model.
-Ranks metros by predicted growth potential using economic indicators.
+Market strength scoring model using weighted fundamentals.
+Ranks metros by CRE investment potential using economic indicators.
 
-Scoring methodology:
-- Base Score: Backward-looking fundamentals (HPI, employment, unemployment)
+Implementation:
+- Rule-based weighted scoring (NOT machine learning)
+- Base Score: Weighted average of backward-looking fundamentals
+  * HPI growth (12m, 3m)
+  * Unemployment rate and change
+  * Population growth
 - Sentiment Adjustment: Forward-looking REIT momentum (multiplicative)
 - Final Score = Base Score × (1 + Sentiment Adjustment)
 """
@@ -38,8 +42,8 @@ CRE_SECTOR_WEIGHTS = {
 
 class MarketStrengthModel:
     """
-    XGBoost model for scoring metro market strength.
-    Uses economic indicators to predict relative market performance.
+    Rule-based model for scoring metro market strength.
+    Uses economic indicators to rank relative market performance.
 
     Scoring approach:
     1. Calculate base_score from backward-looking fundamentals (0-100)
@@ -51,10 +55,6 @@ class MarketStrengthModel:
     MAX_SENTIMENT_ADJUSTMENT = 0.20
 
     def __init__(self):
-        self.model = None
-        self.feature_names = None
-        self.fitted = False
-        self.scaler = None
         self.sentiment_score = None  # Cached REIT sentiment
 
     def prepare_features(
@@ -84,6 +84,10 @@ class MarketStrengthModel:
         Returns:
             Feature DataFrame ready for modeling
         """
+        # Handle empty DataFrame
+        if metro_df.empty:
+            return pd.DataFrame()
+
         features_list = []
 
         for metro in metro_df["metro_code"].unique():
@@ -359,11 +363,7 @@ class MarketStrengthModel:
             group["regional_percentile"] = group["strength_score"].rank(pct=True) * 100
             return group
 
-        scores_df = scores_df.groupby("region", group_keys=False).apply(
-            calc_regional_percentile, include_groups=False
-        )
-        # Re-add the region column since include_groups=False excludes it
-        scores_df["region"] = scores_df.index.get_level_values(0) if scores_df.index.nlevels > 1 else scores_df["metro_code"].map(metro_to_region)
+        scores_df = scores_df.groupby("region", group_keys=False).apply(calc_regional_percentile)
 
         return scores_df
 
@@ -405,7 +405,7 @@ class MarketStrengthModel:
         result["sentiment_adjustment"] = sentiment_adjustment
         result["sentiment_pct"] = sentiment_adjustment * 100  # For display (e.g., +15%)
 
-        # Normalize base_score to 0-100
+        # Normalize base_score to 0-100 (relative ranking among current metros)
         if result["base_score"].std() > 0:
             min_raw = result["base_score"].min()
             max_raw = result["base_score"].max()
@@ -422,8 +422,10 @@ class MarketStrengthModel:
         # Clamp to 0-100 bounds (only affects extreme cases)
         result["strength_score"] = np.clip(raw_adjusted, 0, 100)
 
-        # Step 4: Add rankings
-        result["rank"] = result["strength_score"].rank(ascending=False).astype(int)
+        # Step 4: Add rankings with tie-breaking
+        # Sort by strength_score DESC, then base_score DESC for ties
+        result = result.sort_values(["strength_score", "base_score"], ascending=[False, False])
+        result["rank"] = range(1, len(result) + 1)
 
         # Step 5: Add regional context
         result = self._add_regional_percentile(result)
@@ -434,97 +436,6 @@ class MarketStrengthModel:
                 result[f"reit_{key.replace('sector_', '')}_return"] = value
 
         return result.sort_values("rank")
-
-    def fit_xgboost(
-        self,
-        features_df: pd.DataFrame,
-        target_col: str,
-        feature_cols: Optional[List[str]] = None,
-    ) -> "MarketStrengthModel":
-        """
-        Fit XGBoost model to predict a target variable.
-        Use this when you have historical target data to train on.
-
-        Args:
-            features_df: Feature DataFrame
-            target_col: Column name of target variable
-            feature_cols: List of feature columns (auto-detected if None)
-
-        Returns:
-            self (for method chaining)
-        """
-        from xgboost import XGBRegressor
-        from sklearn.preprocessing import StandardScaler
-
-        if feature_cols is None:
-            # Auto-detect numeric feature columns
-            exclude = ["metro_code", "metro_name", "date", target_col, "rank"]
-            feature_cols = [
-                c for c in features_df.columns
-                if c not in exclude and features_df[c].dtype in ["float64", "int64"]
-            ]
-
-        self.feature_names = feature_cols
-
-        X = features_df[feature_cols].fillna(0)
-        y = features_df[target_col]
-
-        # Scale features
-        self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X)
-
-        # Fit XGBoost
-        self.model = XGBRegressor(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            random_state=42,
-        )
-        self.model.fit(X_scaled, y)
-        self.fitted = True
-
-        return self
-
-    def predict(self, features_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Generate predictions using fitted XGBoost model.
-
-        Args:
-            features_df: Feature DataFrame
-
-        Returns:
-            DataFrame with predictions
-        """
-        if not self.fitted:
-            raise ValueError("Model must be fitted first. Call fit_xgboost() or use calculate_strength_score().")
-
-        X = features_df[self.feature_names].fillna(0)
-        X_scaled = self.scaler.transform(X)
-
-        predictions = self.model.predict(X_scaled)
-
-        result = features_df[["metro_code", "metro_name"]].copy()
-        result["prediction"] = predictions
-        result["rank"] = pd.Series(predictions).rank(ascending=False).astype(int)
-
-        return result.sort_values("rank")
-
-    def get_feature_importance(self) -> Optional[pd.DataFrame]:
-        """
-        Get feature importance from fitted XGBoost model.
-
-        Returns:
-            DataFrame with feature names and importance scores
-        """
-        if not self.fitted or self.model is None:
-            return None
-
-        importance = self.model.feature_importances_
-
-        return pd.DataFrame({
-            "feature": self.feature_names,
-            "importance": importance,
-        }).sort_values("importance", ascending=False)
 
 
 def score_all_metros(

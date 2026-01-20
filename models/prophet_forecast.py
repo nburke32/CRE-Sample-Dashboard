@@ -149,7 +149,7 @@ class ProphetForecaster:
     def _apply_sanity_checks(self, forecast_df: pd.DataFrame) -> pd.DataFrame:
         """
         Apply sanity checks to forecast output.
-        Ensures forecasts are within reasonable bounds.
+        Ensures forecasts are within reasonable bounds while preserving CI ranges.
         """
         if self.training_data is None or self.training_data.empty:
             return forecast_df
@@ -159,18 +159,20 @@ class ProphetForecaster:
         hist_std = self.training_data["y"].std()
         hist_min = self.training_data["y"].min()
         hist_max = self.training_data["y"].max()
-        last_value = self.training_data["y"].iloc[-1]
+        hist_range = hist_max - hist_min
 
-        # Define reasonable bounds (within 3 std of mean, or 50% of last value)
-        lower_bound = max(hist_min * 0.5, hist_mean - 3 * hist_std, 0)
-        upper_bound = max(hist_max * 1.5, hist_mean + 3 * hist_std)
+        # Define reasonable absolute bounds (prevent extreme outliers)
+        # Allow wider range for confidence intervals
+        abs_lower_bound = max(hist_min - hist_range, hist_mean - 5 * hist_std, 0)
+        abs_upper_bound = hist_max + hist_range
 
-        # Clip forecasts to reasonable bounds
-        forecast_df["forecast"] = forecast_df["forecast"].clip(lower_bound, upper_bound)
-        forecast_df["lower_bound"] = forecast_df["lower_bound"].clip(lower_bound, upper_bound)
-        forecast_df["upper_bound"] = forecast_df["upper_bound"].clip(lower_bound, upper_bound)
+        # Only clip extreme outliers, not normal CI ranges
+        forecast_df["forecast"] = forecast_df["forecast"].clip(abs_lower_bound, abs_upper_bound)
+        forecast_df["lower_bound"] = forecast_df["lower_bound"].clip(abs_lower_bound, abs_upper_bound)
+        forecast_df["upper_bound"] = forecast_df["upper_bound"].clip(abs_lower_bound, abs_upper_bound)
 
-        # Ensure lower < forecast < upper
+        # Ensure proper CI ordering: lower <= forecast <= upper
+        # But don't collapse them - just fix ordering if violated
         forecast_df["lower_bound"] = forecast_df[["lower_bound", "forecast"]].min(axis=1)
         forecast_df["upper_bound"] = forecast_df[["upper_bound", "forecast"]].max(axis=1)
 
@@ -342,6 +344,10 @@ def batch_forecast_metros(
     """
     Forecast an indicator for all metros.
     """
+    # Handle empty DataFrame
+    if all_metros_df.empty:
+        return pd.DataFrame()
+
     results = []
 
     for metro in all_metros_df[metro_col].unique():

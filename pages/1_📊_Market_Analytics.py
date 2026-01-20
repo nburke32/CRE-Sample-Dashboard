@@ -4,130 +4,157 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
+from pathlib import Path
+import sys
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from data.nyc_opendata_fetcher import fetch_nyc_property_sales
+from data.storage import DataStorage
 
 st.set_page_config(page_title="Market Analytics", page_icon="📊", layout="wide")
 
 st.title("📊 Market Analytics")
-st.markdown("Commercial real estate transaction trends and market insights.")
+st.markdown("Commercial real estate transaction trends and market insights from NYC property sales data.")
 st.markdown("---")
 
 # =============================================================================
-# SAMPLE DATA - Replace with your actual data source (Snowflake, API, etc.)
+# REAL NYC PROPERTY DATA
 # =============================================================================
-@st.cache_data
-def load_sample_transactions():
+@st.cache_data(ttl=86400)  # 24 hours
+def load_nyc_transactions(force_refresh: bool = False):
     """
-    Load transaction data. Replace this with your actual data source.
-    Expected columns: date, property_name, property_type, market, 
-                      price, sqft, cap_rate, noi, price_per_sqft
+    Load NYC commercial property sales data.
+    Data source: NYC OpenData (Citywide Rolling Calendar Sales)
+
+    Returns DataFrame with columns:
+    - sale_date: Transaction date
+    - borough: NYC borough (Manhattan, Brooklyn, Queens, Bronx, Staten Island)
+    - property_type: Office, Retail, Industrial, etc.
+    - sale_price: Transaction price
+    - gross_square_feet: Building square footage
+    - price_per_sqft: Calculated price per square foot
+    - address: Property address
+    - neighborhood: NYC neighborhood
     """
-    np.random.seed(42)
-    n = 150
-    
-    property_types = ['Office', 'Retail', 'Industrial', 'Multifamily', 'Mixed Use']
-    markets = ['Manhattan', 'Brooklyn', 'Los Angeles', 'Chicago', 'Miami', 'Austin', 'Seattle']
-    
-    dates = pd.date_range(end=datetime.now(), periods=n, freq='W')
-    
-    data = {
-        'date': dates,
-        'property_name': [f"Property {i+1}" for i in range(n)],
-        'property_type': np.random.choice(property_types, n),
-        'market': np.random.choice(markets, n),
-        'price': np.random.uniform(5_000_000, 150_000_000, n),
-        'sqft': np.random.uniform(20_000, 500_000, n),
-        'cap_rate': np.random.uniform(4.5, 8.5, n),
-        'noi': np.random.uniform(500_000, 10_000_000, n),
-    }
-    
-    df = pd.DataFrame(data)
-    df['price_per_sqft'] = df['price'] / df['sqft']
+    df = fetch_nyc_property_sales(force_refresh=force_refresh)
+
+    if df.empty:
+        st.warning("⚠️ No NYC property data available. Click 'Refresh Data' in the sidebar.")
+        return pd.DataFrame()
+
+    # Rename columns to match expected format
+    df = df.rename(columns={
+        'sale_date': 'date',
+        'borough': 'market',
+        'sale_price': 'price',
+        'gross_square_feet': 'sqft'
+    })
+
+    # Add property_name from address
+    if 'address' in df.columns:
+        df['property_name'] = df['address'].fillna('Unknown Address')
+    else:
+        df['property_name'] = 'NYC Commercial Property'
+
     return df
 
-df = load_sample_transactions()
+df = load_nyc_transactions()
 
 # =============================================================================
 # SIDEBAR FILTERS
 # =============================================================================
 with st.sidebar:
-    st.markdown("### 🔍 Filters")
-    
-    # Date range
-    date_range = st.date_input(
-        "Date Range",
-        value=(df['date'].min(), df['date'].max()),
-        min_value=df['date'].min(),
-        max_value=df['date'].max()
-    )
-    
-    # Property type filter
-    property_types = st.multiselect(
-        "Property Type",
-        options=df['property_type'].unique(),
-        default=df['property_type'].unique()
-    )
-    
-    # Market filter
-    markets = st.multiselect(
-        "Market",
-        options=df['market'].unique(),
-        default=df['market'].unique()
-    )
-    
-    # Price range
-    price_min, price_max = st.slider(
-        "Price Range ($M)",
-        min_value=0,
-        max_value=int(df['price'].max() / 1_000_000) + 10,
-        value=(0, int(df['price'].max() / 1_000_000) + 10)
-    )
-    
-    st.markdown("---")
-    st.markdown("### 📤 Upload Data")
-    uploaded_file = st.file_uploader(
-        "Upload transaction data",
-        type=["csv", "xlsx"],
-        help="Replace sample data with your own"
-    )
-    
-    if uploaded_file:
-        try:
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file, parse_dates=['date'])
-            else:
-                df = pd.read_excel(uploaded_file, parse_dates=['date'])
-            st.success(f"✅ Loaded {len(df)} transactions")
-        except Exception as e:
-            st.error(f"Error loading file: {e}")
+    st.markdown("### ⚙️ Settings")
 
-# Apply filters
-filtered_df = df[
-    (df['date'].dt.date >= date_range[0]) &
-    (df['date'].dt.date <= date_range[1]) &
-    (df['property_type'].isin(property_types)) &
-    (df['market'].isin(markets)) &
-    (df['price'] >= price_min * 1_000_000) &
-    (df['price'] <= price_max * 1_000_000)
-]
+    # Data refresh button
+    if st.button("🔄 Refresh NYC Data", use_container_width=True):
+        st.cache_data.clear()
+        df = load_nyc_transactions(force_refresh=True)
+        st.success("✅ Data refreshed!")
+        st.rerun()
+
+    # Data status
+    storage = DataStorage()
+    if storage.dataset_exists("nyc_property_sales"):
+        last_updated = storage.get_last_updated("nyc_property_sales")
+        if last_updated:
+            st.caption(f"📅 Last updated: {last_updated.strftime('%m/%d/%Y %H:%M')}")
+
+    st.markdown("---")
+    st.markdown("### 🔍 Filters")
+
+# Only show filters if data is available
+if not df.empty:
+    with st.sidebar:
+        # Date range
+        date_range = st.date_input(
+            "Date Range",
+            value=(df['date'].min(), df['date'].max()),
+            min_value=df['date'].min(),
+            max_value=df['date'].max()
+        )
+
+        # Property type filter
+        property_types = st.multiselect(
+            "Property Type",
+            options=sorted(df['property_type'].unique()),
+            default=df['property_type'].unique()
+        )
+
+        # Market filter (Borough)
+        markets = st.multiselect(
+            "Borough",
+            options=sorted(df['market'].unique()),
+            default=df['market'].unique()
+        )
+
+        # Price range
+        price_min, price_max = st.slider(
+            "Price Range ($M)",
+            min_value=0,
+            max_value=int(df['price'].max() / 1_000_000) + 10,
+            value=(0, int(df['price'].max() / 1_000_000) + 10)
+        )
+
+        st.markdown("---")
+        st.markdown("### 📊 Data Source")
+        st.caption("**NYC OpenData**")
+        st.caption(f"{len(df):,} transactions")
+        st.caption("Last 24 months")
+        st.caption("[View Dataset →](https://data.cityofnewyork.us/dataset/NYC-Citywide-Rolling-Calendar-Sales/usep-8jbt)")
+
+# Apply filters only if data exists
+if not df.empty:
+    filtered_df = df[
+        (df['date'].dt.date >= date_range[0]) &
+        (df['date'].dt.date <= date_range[1]) &
+        (df['property_type'].isin(property_types)) &
+        (df['market'].isin(markets)) &
+        (df['price'] >= price_min * 1_000_000) &
+        (df['price'] <= price_max * 1_000_000)
+    ]
+else:
+    filtered_df = df
+    st.stop()
 
 # =============================================================================
 # KEY METRICS
 # =============================================================================
 st.markdown("### 📈 Key Metrics")
 
-m1, m2, m3, m4, m5 = st.columns(5)
+m1, m2, m3, m4 = st.columns(4)
 
 total_volume = filtered_df['price'].sum()
-avg_cap_rate = filtered_df['cap_rate'].mean()
-avg_price_psf = filtered_df['price_per_sqft'].mean()
 total_transactions = len(filtered_df)
 avg_deal_size = filtered_df['price'].mean()
+avg_price_psf = filtered_df['price_per_sqft'].mean() if 'price_per_sqft' in filtered_df.columns else 0
 
 m1.metric("Total Volume", f"${total_volume/1e9:.2f}B")
 m2.metric("Transactions", f"{total_transactions:,}")
 m3.metric("Avg Deal Size", f"${avg_deal_size/1e6:.1f}M")
-m4.metric("Avg Cap Rate", f"{avg_cap_rate:.2f}%")
-m5.metric("Avg $/SF", f"${avg_price_psf:.0f}")
+m4.metric("Avg $/SF", f"${avg_price_psf:.0f}" if avg_price_psf > 0 else "N/A")
 
 st.markdown("---")
 
@@ -206,43 +233,9 @@ with col2:
 
 st.markdown("---")
 
-# =============================================================================
-# CAP RATE ANALYSIS
-# =============================================================================
-st.markdown("### 📉 Cap Rate Analysis")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    # Cap rate by property type
-    cap_by_type = filtered_df.groupby('property_type')['cap_rate'].mean().reset_index()
-    cap_by_type = cap_by_type.sort_values('cap_rate', ascending=True)
-    
-    fig_cap = px.bar(
-        cap_by_type,
-        x='cap_rate',
-        y='property_type',
-        orientation='h',
-        title='Average Cap Rate by Property Type',
-        labels={'cap_rate': 'Cap Rate (%)', 'property_type': 'Property Type'}
-    )
-    fig_cap.update_layout(xaxis_ticksuffix='%')
-    st.plotly_chart(fig_cap, use_container_width=True)
-
-with col2:
-    # Cap rate trend over time
-    monthly_cap = monthly_df.groupby('month')['cap_rate'].mean().reset_index()
-    
-    fig_cap_trend = px.line(
-        monthly_cap,
-        x='month',
-        y='cap_rate',
-        title='Cap Rate Trend',
-        labels={'month': 'Month', 'cap_rate': 'Avg Cap Rate (%)'},
-        markers=True
-    )
-    fig_cap_trend.update_layout(yaxis_ticksuffix='%')
-    st.plotly_chart(fig_cap_trend, use_container_width=True)
+# Note: Cap rate data not available in NYC OpenData
+# We'd need NOI (Net Operating Income) to calculate cap rates
+# This could be added in the future with supplementary data sources
 
 st.markdown("---")
 
@@ -270,22 +263,27 @@ with col1:
     st.plotly_chart(fig_psf, use_container_width=True)
 
 with col2:
-    # Scatter: Price vs Cap Rate
-    fig_scatter = px.scatter(
-        filtered_df,
-        x='cap_rate',
-        y='price_per_sqft',
-        color='property_type',
-        size='price',
-        hover_data=['property_name', 'market'],
-        title='Cap Rate vs $/SF by Property Type',
-        labels={'cap_rate': 'Cap Rate (%)', 'price_per_sqft': '$/SF'}
-    )
-    fig_scatter.update_layout(
-        xaxis_ticksuffix='%',
-        yaxis_tickprefix='$'
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    # Scatter: Price vs $/SF (filter out NaN sqft for visualization)
+    scatter_df = filtered_df.dropna(subset=['sqft', 'price_per_sqft'])
+
+    if not scatter_df.empty:
+        fig_scatter = px.scatter(
+            scatter_df,
+            x='price',
+            y='price_per_sqft',
+            color='property_type',
+            size='sqft',
+            hover_data=['property_name', 'market'],
+            title='Sale Price vs $/SF by Property Type',
+            labels={'price': 'Sale Price', 'price_per_sqft': '$/SF', 'sqft': 'Square Feet'}
+        )
+        fig_scatter.update_layout(
+            xaxis_tickprefix='$',
+            yaxis_tickprefix='$'
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
+    else:
+        st.info("No properties with square footage data available for visualization")
 
 st.markdown("---")
 
@@ -298,21 +296,19 @@ st.markdown("### 📋 Recent Transactions")
 display_df = filtered_df.copy()
 display_df = display_df.sort_values('date', ascending=False)
 display_df['price_display'] = display_df['price'].apply(lambda x: f"${x/1e6:.1f}M")
-display_df['sqft_display'] = display_df['sqft'].apply(lambda x: f"{x:,.0f}")
-display_df['cap_rate_display'] = display_df['cap_rate'].apply(lambda x: f"{x:.2f}%")
-display_df['psf_display'] = display_df['price_per_sqft'].apply(lambda x: f"${x:.0f}")
+display_df['sqft_display'] = display_df['sqft'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "N/A")
+display_df['psf_display'] = display_df['price_per_sqft'].apply(lambda x: f"${x:.0f}" if pd.notna(x) else "N/A")
 display_df['date_display'] = display_df['date'].dt.strftime('%Y-%m-%d')
 
 st.dataframe(
-    display_df[['date_display', 'property_name', 'property_type', 'market', 
-                'price_display', 'sqft_display', 'cap_rate_display', 'psf_display']].rename(columns={
+    display_df[['date_display', 'property_name', 'property_type', 'market',
+                'price_display', 'sqft_display', 'psf_display']].rename(columns={
         'date_display': 'Date',
         'property_name': 'Property',
         'property_type': 'Type',
-        'market': 'Market',
+        'market': 'Borough',
         'price_display': 'Price',
         'sqft_display': 'Sq Ft',
-        'cap_rate_display': 'Cap Rate',
         'psf_display': '$/SF'
     }),
     use_container_width=True,
@@ -336,3 +332,52 @@ with col1:
 
 with col2:
     st.markdown(f"**{len(filtered_df)}** transactions shown")
+
+# =============================================================================
+# DATA SOURCING NOTE
+# =============================================================================
+st.markdown("---")
+with st.expander("ℹ️ About Data Sources"):
+    st.markdown("""
+    ### NYC Open Data Approach
+
+    This dashboard currently uses **NYC OpenData** (via the Socrata API) to provide real commercial property
+    transaction data for New York City. This approach was chosen because:
+
+    - **Free & Accessible**: NYC OpenData provides comprehensive property sales records at no cost
+    - **Official Source**: Data comes directly from the NYC Department of Finance
+    - **Real-Time**: Updates are published regularly as transactions are recorded
+    - **Detailed**: Includes sale prices, square footage, property types, and locations
+
+    ### Expanding to National Coverage
+
+    To provide **nationwide commercial real estate transaction data**, the dashboard would need to integrate
+    with premium data providers such as:
+
+    **Real Capital Analytics (RCA)**
+    - Comprehensive commercial property transaction database
+    - Covers $2.5M+ transactions across all major property types
+    - Provides cap rates, NOI, and detailed market analytics
+    - API access available with enterprise subscription
+
+    **Green Street Advisors**
+    - Institutional-grade CRE data and analytics
+    - Property valuations and market fundamentals
+    - REIT analysis and pricing data
+    - Subscription-based data feeds
+
+    **CoStar / LoopNet**
+    - Largest commercial real estate database
+    - Property listings, sales comps, and market data
+    - API access with premium subscription
+
+    **Implementation Note**: Integrating these sources would require:
+    1. Enterprise subscriptions and API credentials
+    2. Additional data fetcher modules (similar to `nyc_opendata_fetcher.py`)
+    3. Data normalization across multiple sources
+    4. Enhanced caching and storage infrastructure
+
+    For demonstration and development purposes, NYC OpenData provides an excellent foundation
+    that showcases the dashboard's analytical capabilities with real transaction data.
+    """)
+
