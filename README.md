@@ -119,6 +119,10 @@ This is an ongoing portfolio project built with AI assistance (Claude Code). It 
 GitHub: [@nburke32](https://github.com/nburke32)
 Repository: [CRE-Sample-Dashboard](https://github.com/nburke32/CRE-Sample-Dashboard)
 
+## License
+
+MIT
+
 ---
 
 *Built with Streamlit • Powered by NYC OpenData & FRED*
