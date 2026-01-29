@@ -158,9 +158,11 @@ class YFinanceFetcher:
             dates_1y = latest_date - timedelta(days=365)
 
             def calc_return(start_date):
-                start_data = sector_data[sector_data["date"] >= start_date].head(1)
-                if start_data.empty or current.empty:
+                filtered = sector_data[sector_data["date"] >= start_date]
+                if filtered.empty or current.empty:
                     return None
+                first_date = filtered["date"].min()
+                start_data = filtered[filtered["date"] == first_date]
                 start_price = start_data["close"].mean()
                 current_price = current["close"].mean()
                 return ((current_price - start_price) / start_price) * 100

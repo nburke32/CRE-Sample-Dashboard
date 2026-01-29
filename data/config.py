@@ -205,7 +205,6 @@ REIT_TICKERS = {
 
     # Industrial/Logistics
     "PLD": {"name": "Prologis", "sector": "industrial"},
-    "DRE": {"name": "Duke Realty", "sector": "industrial"},
 
     # Retail - Malls
     "SPG": {"name": "Simon Property Group", "sector": "retail_mall"},

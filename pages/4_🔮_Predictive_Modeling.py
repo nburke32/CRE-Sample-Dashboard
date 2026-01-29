@@ -772,7 +772,7 @@ elif analysis_type == "Market Rankings":
 
             st.markdown("##### Forward-Looking Weights (Sentiment)")
             for sector, weight in methodology["sentiment_weights"].items():
-                st.caption(f"  • {sector.title()}: {weight*100:.0f}%")
+                st.caption(f"  • {sector.replace('_', ' ').title()}: {weight*100:.0f}%")
 
             # Data notes
             if "data_notes" in methodology:
@@ -1077,10 +1077,30 @@ elif analysis_type == "Value Opportunities":
             During negative sentiment, high base scores indicate metros with strong underlying economics that may be undervalued by the market.
             """)
 
-        # Table with full details
-        with st.expander("📋 Full Metro Rankings"):
-            display_df = value_df.copy()
-            display_df.columns = ["Code", "Metro", "Base Score", "Adjusted Score", "Sentiment Impact", "Region", "Sentiment Drag"]
+        # Sentiment-adjusted Full Metro Rankings
+        st.caption("Adjust how heavily REIT-based sentiment influences the Adjusted Score below. "
+                   "This only affects the Full Metro Rankings breakdown — the fundamentals chart above is unchanged.")
+        value_sentiment_pct = st.slider(
+            "Sentiment Weight",
+            min_value=0,
+            max_value=100,
+            value=60,
+            step=5,
+            format="%d%%",
+            help="Controls the max sentiment adjustment applied to base scores. "
+                 "Higher values amplify the impact of REIT momentum on the Adjusted Score."
+        )
+        # Scale so 100% on slider = max_sentiment_adj of 2.0 (full swing)
+        value_sentiment_adj = (value_sentiment_pct / 100.0) * 2.0
+
+        # Re-score with user-selected sentiment weight
+        fmr_scores, _, _ = calculate_market_scores(metros_df, national_df, reit_df, max_sentiment_adj=value_sentiment_adj)
+        fmr_df = fmr_scores[["metro_code", "metro_name", "base_score", "strength_score", "sentiment_contribution", "region"]].copy()
+        fmr_df = fmr_df.sort_values("base_score", ascending=False)
+
+        with st.expander("📋 Full Metro Rankings", expanded=True):
+            display_df = fmr_df.copy()
+            display_df.columns = ["Code", "Metro", "Base Score", "Adjusted Score", "Sentiment Impact", "Region"]
             display_df = display_df[["Code", "Metro", "Region", "Base Score", "Adjusted Score", "Sentiment Impact"]]
             display_df["Base Score"] = display_df["Base Score"].round(1)
             display_df["Adjusted Score"] = display_df["Adjusted Score"].round(1)
@@ -1217,7 +1237,7 @@ elif analysis_type == "REIT Sentiment":
                 if pd.notna(return_1m):
                     delta_color = "normal" if return_1m >= 0 else "inverse"
                     st.metric(
-                        row["sector"].title(),
+                        row["sector"].replace("_", " ").title(),
                         f"${row['current_avg_price']:.2f}",
                         f"{return_1m:+.1f}% (1M)",
                         delta_color=delta_color
@@ -1227,7 +1247,7 @@ elif analysis_type == "REIT Sentiment":
 
     # Sector selector
     sectors = list(reit_df["sector"].unique())
-    selected_sector = st.selectbox("Select Sector", sectors, format_func=lambda x: x.title())
+    selected_sector = st.selectbox("Select Sector", sectors, format_func=lambda x: x.replace("_", " ").title())
 
     sector_data = reit_df[reit_df["sector"] == selected_sector]
 
@@ -1237,17 +1257,31 @@ elif analysis_type == "REIT Sentiment":
         x="date",
         y="close",
         color="ticker",
-        title=f"{selected_sector.title()} REIT Prices",
+        title=f"{selected_sector.replace('_', ' ').title()} REIT Prices",
         labels={"close": "Price ($)", "date": "Date", "ticker": "Ticker"}
     )
     fig.update_layout(hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Ticker details
-    with st.expander("📋 Ticker Details"):
-        sector_tickers = {k: v for k, v in REIT_TICKERS.items() if v["sector"] == selected_sector}
-        for ticker, info in sector_tickers.items():
-            st.markdown(f"**{ticker}**: {info['name']}")
+    # Ticker details - Show all contributing REITs
+    with st.expander("📋 All Contributing REIT Tickers"):
+        st.markdown("**All REITs used in this dashboard for market sentiment analysis:**")
+        st.markdown("---")
+
+        # Group by sector
+        sectors_grouped = {}
+        for ticker, info in REIT_TICKERS.items():
+            sector = info["sector"]
+            if sector not in sectors_grouped:
+                sectors_grouped[sector] = []
+            sectors_grouped[sector].append((ticker, info["name"]))
+
+        # Display by sector
+        for sector, tickers in sorted(sectors_grouped.items()):
+            st.markdown(f"**{sector.replace('_', ' ').title()}**")
+            for ticker, name in sorted(tickers):
+                st.markdown(f"- **{ticker}**: {name}")
+            st.markdown("")
 
 # =============================================================================
 # ECONOMIC OVERVIEW VIEW
