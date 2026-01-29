@@ -30,6 +30,7 @@ data/__pycache__/
 
 # Tests (keeping private for now)
 tests/
+pytest.ini
 TEST_RESULTS.md
 BUG_REPORT.md
 REAL_DATA_TESTING_REPORT.md
