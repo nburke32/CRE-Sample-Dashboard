@@ -1297,11 +1297,21 @@ elif analysis_type == "Economic Overview":
 
     # Get latest values and calculate changes
     sorted_df = national_df.sort_values("date")
-    latest = sorted_df.iloc[-1]
 
-    # Get value from ~1 month ago for delta calculations
-    one_month_ago = sorted_df[sorted_df["date"] <= (latest["date"] - pd.Timedelta(days=25))]
-    prev = one_month_ago.iloc[-1] if not one_month_ago.empty else latest
+    def get_latest_valid(column):
+        """Get most recent non-null value and a ~1 month prior value for delta."""
+        valid = sorted_df[sorted_df[column].notna()]
+        if valid.empty:
+            return None, None
+        latest_row = valid.iloc[-1]
+        prev_data = valid[valid["date"] <= (latest_row["date"] - pd.Timedelta(days=25))]
+        prev_row = prev_data.iloc[-1] if not prev_data.empty else None
+        return latest_row, prev_row
+
+    # For backward compat: latest row for date reference
+    latest = sorted_df.iloc[-1]
+    prev_fallback = sorted_df[sorted_df["date"] <= (latest["date"] - pd.Timedelta(days=25))]
+    prev = prev_fallback.iloc[-1] if not prev_fallback.empty else latest
 
     # =============================================================================
     # TOP METRICS ROW - Key CRE Indicators
@@ -1310,47 +1320,52 @@ elif analysis_type == "Economic Overview":
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
-        if "treasury_10y" in latest and pd.notna(latest["treasury_10y"]):
-            delta = latest["treasury_10y"] - prev["treasury_10y"] if "treasury_10y" in prev else None
+        cur, prv = get_latest_valid("treasury_10y")
+        if cur is not None:
+            delta = cur["treasury_10y"] - prv["treasury_10y"] if prv is not None else None
             st.metric(
                 "10Y Treasury",
-                f"{latest['treasury_10y']:.2f}%",
+                f"{cur['treasury_10y']:.2f}%",
                 f"{delta:+.2f}%" if delta else None,
                 delta_color="inverse"
             )
     with col2:
-        if "mortgage_30y" in latest and pd.notna(latest["mortgage_30y"]):
-            delta = latest["mortgage_30y"] - prev["mortgage_30y"] if "mortgage_30y" in prev else None
+        cur, prv = get_latest_valid("mortgage_30y")
+        if cur is not None:
+            delta = cur["mortgage_30y"] - prv["mortgage_30y"] if prv is not None else None
             st.metric(
                 "30Y Mortgage",
-                f"{latest['mortgage_30y']:.2f}%",
+                f"{cur['mortgage_30y']:.2f}%",
                 f"{delta:+.2f}%" if delta else None,
                 delta_color="inverse"
             )
     with col3:
-        if "fed_funds" in latest and pd.notna(latest["fed_funds"]):
-            delta = latest["fed_funds"] - prev["fed_funds"] if "fed_funds" in prev else None
+        cur, prv = get_latest_valid("fed_funds")
+        if cur is not None:
+            delta = cur["fed_funds"] - prv["fed_funds"] if prv is not None else None
             st.metric(
                 "Fed Funds",
-                f"{latest['fed_funds']:.2f}%",
+                f"{cur['fed_funds']:.2f}%",
                 f"{delta:+.2f}%" if delta else None,
                 delta_color="inverse"
             )
     with col4:
-        if "unemployment_national" in latest and pd.notna(latest["unemployment_national"]):
-            delta = latest["unemployment_national"] - prev["unemployment_national"] if "unemployment_national" in prev else None
+        cur, prv = get_latest_valid("unemployment_national")
+        if cur is not None:
+            delta = cur["unemployment_national"] - prv["unemployment_national"] if prv is not None else None
             st.metric(
                 "Unemployment",
-                f"{latest['unemployment_national']:.1f}%",
+                f"{cur['unemployment_national']:.1f}%",
                 f"{delta:+.1f}%" if delta else None,
                 delta_color="inverse"
             )
     with col5:
-        if "cre_delinquency" in latest and pd.notna(latest["cre_delinquency"]):
-            delta = latest["cre_delinquency"] - prev["cre_delinquency"] if "cre_delinquency" in prev else None
+        cur, prv = get_latest_valid("cre_delinquency")
+        if cur is not None:
+            delta = cur["cre_delinquency"] - prv["cre_delinquency"] if prv is not None else None
             st.metric(
                 "CRE Delinquency",
-                f"{latest['cre_delinquency']:.2f}%",
+                f"{cur['cre_delinquency']:.2f}%",
                 f"{delta:+.2f}%" if delta else None,
                 delta_color="inverse"
             )
@@ -1404,10 +1419,10 @@ elif analysis_type == "Economic Overview":
             rate_metrics = st.columns(len(available_rates))
             for i, col_name in enumerate(available_rates):
                 with rate_metrics[i]:
-                    current = latest.get(col_name)
-                    previous = prev.get(col_name)
-                    if pd.notna(current):
-                        delta = current - previous if pd.notna(previous) else None
+                    cur, prv = get_latest_valid(col_name)
+                    if cur is not None:
+                        current = cur[col_name]
+                        delta = current - prv[col_name] if prv is not None else None
                         st.metric(
                             format_indicator_name(col_name),
                             f"{current:.2f}%",
@@ -1460,7 +1475,10 @@ elif analysis_type == "Economic Overview":
     # TAB 2: Construction
     with tab2:
         st.markdown("##### Construction & Development Activity")
-        st.caption("Construction spending and permits indicate CRE supply pipeline and developer confidence.")
+        st.caption("Construction spending and permits indicate CRE supply pipeline and developer confidence. "
+                   "Note: Commercial construction is an aggregate national figure from the U.S. Census Bureau — "
+                   "it does not break down by asset class or geography. For property-level pipeline data, "
+                   "sources like CoStar or Dodge Data would be needed.")
 
         construction_cols = ["construction_spending", "commercial_construction", "housing_starts", "building_permits"]
         available_construction = [c for c in construction_cols if c in national_df.columns]
@@ -1470,10 +1488,11 @@ elif analysis_type == "Economic Overview":
             const_metrics = st.columns(min(len(available_construction), 4))
             for i, col_name in enumerate(available_construction[:4]):
                 with const_metrics[i]:
-                    current = latest.get(col_name)
-                    previous = prev.get(col_name)
-                    if pd.notna(current):
-                        delta_pct = ((current - previous) / previous * 100) if pd.notna(previous) and previous != 0 else None
+                    cur, prv = get_latest_valid(col_name)
+                    if cur is not None:
+                        current = cur[col_name]
+                        previous = prv[col_name] if prv is not None else None
+                        delta_pct = ((current - previous) / previous * 100) if previous is not None and pd.notna(previous) and previous != 0 else None
                         # Format based on indicator type
                         if col_name in ["construction_spending", "commercial_construction"]:
                             val_str = f"${current/1000:.0f}B" if current > 1000 else f"${current:.0f}M"
@@ -1544,20 +1563,21 @@ elif analysis_type == "Economic Overview":
             cons_metrics = st.columns(len(available_consumer))
             for i, col_name in enumerate(available_consumer):
                 with cons_metrics[i]:
-                    current = latest.get(col_name)
-                    previous = prev.get(col_name)
-                    if pd.notna(current):
+                    cur, prv = get_latest_valid(col_name)
+                    if cur is not None:
+                        current = cur[col_name]
+                        previous = prv[col_name] if prv is not None else None
                         if col_name == "retail_sales":
                             val_str = f"${current/1000:.0f}B"
-                            delta_pct = ((current - previous) / previous * 100) if pd.notna(previous) and previous != 0 else None
+                            delta_pct = ((current - previous) / previous * 100) if previous is not None and pd.notna(previous) and previous != 0 else None
                             delta_str = f"{delta_pct:+.1f}%" if delta_pct else None
                         elif col_name == "consumer_sentiment":
                             val_str = f"{current:.1f}"
-                            delta = current - previous if pd.notna(previous) else None
+                            delta = current - previous if previous is not None and pd.notna(previous) else None
                             delta_str = f"{delta:+.1f}" if delta else None
                         else:  # CPI
                             val_str = f"{current:.1f}"
-                            delta_pct = ((current - previous) / previous * 100) if pd.notna(previous) and previous != 0 else None
+                            delta_pct = ((current - previous) / previous * 100) if previous is not None and pd.notna(previous) and previous != 0 else None
                             delta_str = f"{delta_pct:+.1f}%" if delta_pct else None
                         st.metric(format_indicator_name(col_name), val_str, delta_str)
 
@@ -1613,22 +1633,23 @@ elif analysis_type == "Economic Overview":
             labor_metrics = st.columns(len(available_labor))
             for i, col_name in enumerate(available_labor):
                 with labor_metrics[i]:
-                    current = latest.get(col_name)
-                    previous = prev.get(col_name)
-                    if pd.notna(current):
+                    cur, prv = get_latest_valid(col_name)
+                    if cur is not None:
+                        current = cur[col_name]
+                        previous = prv[col_name] if prv is not None else None
                         if col_name == "unemployment_national":
                             val_str = f"{current:.1f}%"
-                            delta = current - previous if pd.notna(previous) else None
+                            delta = current - previous if previous is not None and pd.notna(previous) else None
                             delta_str = f"{delta:+.1f}%" if delta else None
                             st.metric(format_indicator_name(col_name), val_str, delta_str, delta_color="inverse")
                         elif col_name == "payrolls":
                             val_str = f"{current/1000:.1f}M"
-                            delta = (current - previous) if pd.notna(previous) else None
+                            delta = (current - previous) if previous is not None and pd.notna(previous) else None
                             delta_str = f"{delta:+.0f}K" if delta else None
                             st.metric(format_indicator_name(col_name), val_str, delta_str)
                         else:  # industrial_production
                             val_str = f"{current:.1f}"
-                            delta_pct = ((current - previous) / previous * 100) if pd.notna(previous) and previous != 0 else None
+                            delta_pct = ((current - previous) / previous * 100) if previous is not None and pd.notna(previous) and previous != 0 else None
                             delta_str = f"{delta_pct:+.1f}%" if delta_pct else None
                             st.metric(format_indicator_name(col_name), val_str, delta_str)
 
@@ -1665,6 +1686,9 @@ elif analysis_type == "Economic Overview":
                     )
                     fig.update_layout(hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
+                    st.caption("The Industrial Production Index (Federal Reserve) measures real output of U.S. manufacturing, "
+                               "mining, and utilities, indexed to 2017 = 100. Rising production typically signals increased "
+                               "demand for warehouse, distribution, and logistics CRE.")
 
             # Unemployment chart (if not already shown)
             if "unemployment_national" in national_df.columns:
@@ -1697,17 +1721,18 @@ elif analysis_type == "Economic Overview":
             cre_metrics = st.columns(len(available_cre))
             for i, col_name in enumerate(available_cre):
                 with cre_metrics[i]:
-                    current = latest.get(col_name)
-                    previous = prev.get(col_name)
-                    if pd.notna(current):
+                    cur, prv = get_latest_valid(col_name)
+                    if cur is not None:
+                        current = cur[col_name]
+                        previous = prv[col_name] if prv is not None else None
                         if col_name == "cre_loans":
-                            val_str = f"${current/1000000:.2f}T"
-                            delta_pct = ((current - previous) / previous * 100) if pd.notna(previous) and previous != 0 else None
+                            val_str = f"${current:,.0f}B"
+                            delta_pct = ((current - previous) / previous * 100) if previous is not None and pd.notna(previous) and previous != 0 else None
                             delta_str = f"{delta_pct:+.1f}%" if delta_pct else None
                             st.metric(format_indicator_name(col_name), val_str, delta_str)
                         else:  # delinquency
                             val_str = f"{current:.2f}%"
-                            delta = current - previous if pd.notna(previous) else None
+                            delta = current - previous if previous is not None and pd.notna(previous) else None
                             delta_str = f"{delta:+.2f}%" if delta else None
                             st.metric(format_indicator_name(col_name), val_str, delta_str, delta_color="inverse")
 
@@ -1717,14 +1742,12 @@ elif analysis_type == "Economic Overview":
             if "cre_loans" in national_df.columns:
                 with col1:
                     loans_df = national_df[["date", "cre_loans"]].dropna()
-                    loans_df["cre_loans"] = loans_df["cre_loans"] / 1000000  # Trillions
-
                     fig = px.area(
                         loans_df,
                         x="date",
                         y="cre_loans",
                         title="CRE Loans Outstanding (All Commercial Banks)",
-                        labels={"cre_loans": "Trillions ($)", "date": "Date"}
+                        labels={"cre_loans": "Billions ($)", "date": "Date"}
                     )
                     fig.update_traces(fillcolor="rgba(99, 110, 250, 0.3)", line_color="#636EFA")
                     fig.update_layout(hovermode="x unified")
@@ -1749,7 +1772,12 @@ elif analysis_type == "Economic Overview":
                     fig.update_layout(hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
 
-            st.info("💡 **Interpretation:** Rising delinquency rates may signal distressed asset opportunities, while declining CRE loan growth can indicate tighter lending standards.")
+            st.info("💡 **Interpretation:** Rising delinquency rates may signal distressed asset opportunities, "
+                    "while declining CRE loan growth can indicate tighter lending standards.")
+            st.caption("⚠️ CRE loans shown reflect only commercial bank balance sheets (FDIC-reported). "
+                       "Significant CRE debt held by CMBS, life insurers, debt funds, and private lenders is not captured here. "
+                       "Additionally, the CRE market faces substantial near-term maturity walls — "
+                       "many CRE firms are actively working through refinancing as large volumes of loans come due.")
         else:
             st.info("No CRE credit data available. Click 'Refresh Data' to fetch.")
 
@@ -1765,8 +1793,12 @@ with st.expander("ℹ️ About This Dashboard"):
     - **FRED** (Federal Reserve Economic Data): Employment, housing prices, interest rates, economic indicators
     - **YFinance**: REIT prices for sector sentiment analysis
 
-    **Metro Forecast Model:**
-    - Prophet (Facebook's time-series forecasting model) for individual metro HPI and unemployment rate predictions
+    **Methodology by Tab:**
+    - **Market Rankings** — Composite scoring from FRED fundamentals (HPI growth, unemployment, population) with REIT sentiment adjustment
+    - **Metro Forecast** — Prophet time-series model for individual metro HPI and unemployment projections
+    - **REIT Sentiment** — Sector-level price momentum from publicly traded REITs, weighted by CRE relevance
+    - **Value Opportunities** — Fundamentals-first ranking with adjustable sentiment overlay to identify potential entry points
+    - **Economic Overview** — National economic indicators tracked across interest rates, construction, consumer health, labor, and CRE credit
 
     **Metros Covered:** 20 major CRE markets across 6 regions (Northeast, Southeast, Midwest, Southwest, West, Mid-Atlantic)
 
