@@ -1,72 +1,171 @@
+"""
+SEC Filing Chatbot
+Powered by SEC Edgar API + Claude AI
+"""
+
 import streamlit as st
-import time
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from data.sec_fetcher import SECFetcher
+from models.sec_chatbot import SECChatbot
 
 st.set_page_config(page_title="SEC Chatbot", page_icon="🤖", layout="wide")
 
-st.title("🤖 SEC Chatbot")
-st.markdown("Query SEC filings and regulatory documents via Snowflake.")
+# =============================================================================
+# INITIALIZATION
+# =============================================================================
+
+# Paths
+DATA_DIR = Path(__file__).parent.parent / "data_store" / "sec_filings"
+LOG_DIR = Path(__file__).parent.parent / "logs"
+
+# Initialize SEC fetcher
+@st.cache_resource
+def get_sec_fetcher():
+    return SECFetcher(cache_dir=DATA_DIR)
+
+sec_fetcher = get_sec_fetcher()
+
+# =============================================================================
+# SIDEBAR - CONFIGURATION
+# =============================================================================
+
+with st.sidebar:
+    st.markdown("### ⚙️ Settings")
+
+    # API Key (Production: use Key Vault instead of Streamlit secrets)
+    api_key = None
+
+    # Try to get API key from secrets (check both locations)
+    if "api" in st.secrets and "ANTHROPIC_API_KEY" in st.secrets["api"]:
+        api_key = st.secrets["api"]["ANTHROPIC_API_KEY"]
+        st.success("✅ API Key Loaded")
+    elif "ANTHROPIC_API_KEY" in st.secrets:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+        st.success("✅ API Key Loaded")
+    else:
+        st.warning("⚠️ No API key found in secrets")
+        st.info("Add `ANTHROPIC_API_KEY` to `.streamlit/secrets.toml`")
+
+    # Model selection
+    models = SECChatbot.get_available_models()
+    selected_model = st.selectbox(
+        "Claude Model",
+        options=[m["id"] for m in models],
+        format_func=lambda x: next(m["name"] for m in models if m["id"] == x),
+        index=1,  # Default to Sonnet (recommended)
+        help="Haiku is fastest and cheapest. Sonnet is recommended for most analysis."
+    )
+
+    st.markdown("---")
+
+    # API Usage Stats (if API key available)
+    if api_key:
+        chatbot = SECChatbot(api_key=api_key, log_dir=LOG_DIR)
+        usage = chatbot.get_usage_stats()
+
+        st.markdown("### 📊 API Usage")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Calls Today", usage["calls_today"])
+            st.metric("Total Calls", usage["total_calls"])
+        with col2:
+            st.metric("Cost Today", f"${usage['cost_today']:.4f}")
+            st.metric("Total Cost", f"${usage['total_cost']:.4f}")
+
+    st.markdown("---")
+
+    # Example queries
+    st.markdown("### 💡 Example Questions")
+    st.markdown("""
+    - *"What were total revenues for the year?"*
+    - *"Summarize the key risk factors"*
+    - *"What does the company say about AI strategy?"*
+    - *"What are the main business segments?"*
+    - *"Summarize management's discussion and analysis"*
+    """)
+
+    if st.button("🗑️ Clear Chat"):
+        st.session_state.messages = []
+        st.session_state.current_filing = None
+        st.rerun()
+
+# =============================================================================
+# MAIN CONTENT
+# =============================================================================
+
+st.title("🤖 SEC Filing Chatbot")
+st.markdown("Ask questions about SEC filings using Claude AI. Powered by official SEC Edgar API.")
 st.markdown("---")
 
-# =============================================================================
-# SNOWFLAKE MCP CONFIGURATION
-# TODO: Update these settings once your Snowflake MCP server is configured
-# =============================================================================
-MCP_CONFIG = {
-    "account": "your_account.us-west-2.aws",  # Your Snowflake account
-    "mcp_endpoint": None,  # MCP server endpoint (set after configuration)
-    "warehouse": "your_warehouse",
-    "database": "your_database",
-    "schema": "your_schema",
-}
+# Company and filing selection
+col1, col2 = st.columns([2, 1])
 
-def query_mcp_server(prompt: str) -> str:
-    """
-    Query the Snowflake MCP server with a natural language prompt.
-    
-    TODO: Implement MCP client connection once server is configured.
-    This function should:
-    1. Connect to your Snowflake Managed MCP server
-    2. Send the prompt to Cortex Analyst/Search
-    3. Return the response from SEC filings data
-    
-    Example MCP tools available:
-    - Cortex Analyst: For structured queries on SEC data
-    - Cortex Search: For semantic search across filings
-    """
-    # Placeholder - replace with actual MCP client call
-    # Example structure:
-    # from snowflake.core import MCP  # hypothetical import
-    # client = MCP.connect(MCP_CONFIG["mcp_endpoint"])
-    # response = client.query(prompt)
-    # return response.content
-    
-    time.sleep(1.5)  # Simulate network latency - remove when implementing
-    return f"🔧 **MCP Connection Pending**\n\nYour query: *\"{prompt}\"*\n\nOnce your Snowflake MCP server is configured with SEC Marketplace data, this will return real results from 10-K, 10-Q, 8-K, and other SEC filings."
+with col1:
+    # Get available companies
+    companies = sec_fetcher.get_available_companies()
+    company_options = {c["ticker"]: c["name"] for c in companies}
 
+    selected_ticker = st.selectbox(
+        "Select Company",
+        options=list(company_options.keys()),
+        format_func=lambda x: f"{x} - {company_options[x]}"
+    )
+
+with col2:
+    filing_type = st.selectbox(
+        "Filing Type",
+        options=["10-K", "10-Q"],
+        help="10-K = Annual Report, 10-Q = Quarterly Report"
+    )
+
+# Load filing button
+if st.button("📥 Load Filing", type="primary"):
+    with st.spinner(f"Fetching latest {filing_type} for {selected_ticker}..."):
+        try:
+            filing = sec_fetcher.get_latest_filing(selected_ticker, filing_type)
+
+            if not filing:
+                st.error(f"No {filing_type} found for {selected_ticker}")
+            else:
+                # Download and parse filing
+                html = sec_fetcher.download_filing(filing)
+                text = sec_fetcher.extract_text_from_html(html)
+
+                # Store in session state
+                st.session_state.current_filing = {
+                    "ticker": selected_ticker,
+                    "company": company_options[selected_ticker],
+                    "form": filing["form"],
+                    "filing_date": filing["filing_date"],
+                    "text": text,
+                    "text_length": len(text)
+                }
+
+                st.success(f"✅ Loaded {filing_type} filed on {filing['filing_date']}")
+                st.info(f"📄 Filing length: {len(text):,} characters")
+
+        except Exception as e:
+            st.error(f"Error loading filing: {e}")
+
+# Display current filing info
+if "current_filing" in st.session_state and st.session_state.current_filing:
+    filing_info = st.session_state.current_filing
+    st.info(
+        f"📋 **Current Filing:** {filing_info['ticker']} - {filing_info['company']} "
+        f"({filing_info['form']} filed {filing_info['filing_date']}) - "
+        f"{filing_info['text_length']:,} characters"
+    )
+
+st.markdown("---")
 
 # =============================================================================
 # CHAT INTERFACE
 # =============================================================================
-
-# Sidebar with connection status
-with st.sidebar:
-    st.markdown("### 🔗 Connection Status")
-    if MCP_CONFIG["mcp_endpoint"]:
-        st.success("Connected to MCP Server")
-    else:
-        st.warning("MCP Server not configured")
-    
-    st.markdown("---")
-    st.markdown("### 💡 Example Queries")
-    st.markdown("""
-    - *"What were Apple's revenue trends in their latest 10-K?"*
-    - *"Summarize risk factors from Tesla's most recent 10-Q"*
-    - *"Show me 8-K filings for NVDA in the last 90 days"*
-    """)
-    
-    if st.button("🗑️ Clear Chat"):
-        st.session_state.messages = []
-        st.rerun()
 
 # Initialize chat history
 if "messages" not in st.session_state:
@@ -76,19 +175,141 @@ if "messages" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if message["role"] == "assistant" and "metadata" in message:
+            # Show cost info
+            meta = message["metadata"]
+            st.caption(
+                f"💰 {meta['total_tokens']:,} tokens | ${meta['cost']:.4f} | {meta['model'].split('-')[1].title()}"
+            )
 
 # Chat input
-if prompt := st.chat_input("Ask about SEC filings..."):
+if prompt := st.chat_input("Ask a question about the filing..."):
+    # Check if filing is loaded
+    if "current_filing" not in st.session_state or not st.session_state.current_filing:
+        st.error("⚠️ Please load a filing first using the 'Load Filing' button above.")
+        st.stop()
+
+    # Check if API key available
+    if not api_key:
+        st.error("⚠️ No API key configured. Add ANTHROPIC_API_KEY to .streamlit/secrets.toml")
+        st.stop()
+
     # Add user message to history
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Query MCP server with spinner
+    # Get answer from Claude
     with st.chat_message("assistant"):
-        with st.spinner("Searching SEC filings..."):
-            response = query_mcp_server(prompt)
-        st.markdown(response)
-    
-    st.session_state.messages.append({"role": "assistant", "content": response})
+        with st.spinner("Analyzing filing..."):
+            try:
+                filing_info = st.session_state.current_filing
+                chatbot = SECChatbot(api_key=api_key, log_dir=LOG_DIR)
 
+                response = chatbot.ask_question(
+                    filing_text=filing_info["text"],
+                    question=prompt,
+                    model=selected_model,
+                    company_name=filing_info["company"]
+                )
+
+                st.markdown(response["answer"])
+                st.caption(
+                    f"💰 {response['total_tokens']:,} tokens | "
+                    f"${response['cost']:.4f} | "
+                    f"{response['model'].split('-')[1].title()}"
+                )
+
+                # Save to history with metadata
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response["answer"],
+                    "metadata": response
+                })
+
+            except Exception as e:
+                st.error(f"Error: {e}")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"❌ Error: {e}"
+                })
+
+# =============================================================================
+# DOCUMENTATION
+# =============================================================================
+
+with st.expander("📚 About This Chatbot"):
+    st.markdown("""
+    **How It Works:**
+
+    1. **Fetch Filings**: Retrieves SEC filings (10-K, 10-Q) from official SEC Edgar API
+    2. **Parse Content**: Extracts clean text from HTML filings
+    3. **AI Analysis**: Uses Claude AI to answer questions based on filing content
+    4. **Local Caching**: Filings are cached locally to avoid redundant API calls
+
+    **Data Sources:**
+
+    - **SEC Edgar API**: Official SEC database (free, public, no auth required)
+    - **Claude API**: Anthropic's AI for natural language understanding
+
+    **Curated Companies:**
+
+    This demo includes 9 pre-selected companies (REITs + Tech):
+    - **REITs**: PLD, EQIX, DLR, SPG, O
+    - **Tech**: AAPL, MSFT, AMZN, GOOGL
+
+    **Security Notes:**
+
+    - ⚠️ **Portfolio Demo**: API keys stored in Streamlit secrets (local only)
+    - ⚠️ **Production Approach**: Use Azure Key Vault / AWS Secrets Manager
+    - ⚠️ **Rate Limiting**: SEC allows 10 req/sec max (enforced in code)
+    - ⚠️ **Cost Controls**: $20 spend limit on API key, usage monitoring enabled
+
+    **Limitations:**
+
+    - Filings are truncated to 500K characters for Claude context limits
+    - Only latest filing of each type is cached per company
+    - No full-text search across all companies (curated set only)
+
+    **Production Enhancements:**
+
+    In a commercial setting, I would:
+    1. Use paid SEC data provider (Bloomberg, FactSet) for broader coverage
+    2. Implement proper authentication and user session management
+    3. Add rate limiting per user (not just SEC rate limits)
+    4. Set up monitoring/alerting (email on high usage)
+    5. Use Key Vault for secrets (never Streamlit secrets)
+    6. Add audit logging for compliance
+    """)
+
+with st.expander("⚠️ Data Limitations & Coverage"):
+    st.markdown("""
+    **Curated Company List:**
+
+    This chatbot is designed as a **portfolio demonstration**, not a production tool.
+    It includes a curated set of 9 companies to demonstrate:
+    - SEC Edgar API integration
+    - Filing parsing and text extraction
+    - Claude AI integration for Q&A
+    - Caching strategy
+    - Usage monitoring
+
+    **Why Curated?**
+
+    - ✅ Manageable data size (no massive storage needs)
+    - ✅ Fast demo experience (pre-cached filings)
+    - ✅ Cost control (limited API usage)
+    - ✅ Focus on skill demonstration, not comprehensive coverage
+
+    **Production Approach:**
+
+    In a real commercial application, I would:
+    - Integrate with **Bloomberg Terminal / FactSet / S&P Capital IQ**
+    - Support search across **all public companies** (~6,000+ filers)
+    - Enable **historical filing analysis** (multiple years)
+    - Add **comparative analysis** (compare companies side-by-side)
+    - Implement **semantic search** across filing corpus
+    - Build **alerting system** for new filings
+
+    The goal here is demonstrating **technical capability**, not building a commercial product.
+    """)

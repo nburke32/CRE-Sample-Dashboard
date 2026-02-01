@@ -25,6 +25,9 @@ Thumbs.db
 # Parquet data store
 data_store/
 
+# API usage logs
+logs/
+
 # Python cache in data folder
 data/__pycache__/
 
