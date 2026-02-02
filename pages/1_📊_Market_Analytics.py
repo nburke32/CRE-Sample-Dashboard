@@ -1,11 +1,10 @@
-import streamlit as st
+import sys
+from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import numpy as np
-from pathlib import Path
-import sys
+import streamlit as st
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -214,7 +213,7 @@ col1, col2 = st.columns(2)
 with col1:
     market_volume = filtered_df.groupby('market')['price'].sum().reset_index()
     market_volume.columns = ['market', 'volume']
-    
+
     fig_market = px.pie(
         market_volume,
         values='volume',
@@ -227,7 +226,7 @@ with col1:
 with col2:
     type_volume = filtered_df.groupby('property_type')['price'].sum().reset_index()
     type_volume.columns = ['property_type', 'volume']
-    
+
     fig_type = px.pie(
         type_volume,
         values='volume',
@@ -256,7 +255,7 @@ with col1:
     # Price/SF by market
     psf_by_market = filtered_df.groupby('market')['price_per_sqft'].mean().reset_index()
     psf_by_market = psf_by_market.sort_values('price_per_sqft', ascending=True)
-    
+
     fig_psf = px.bar(
         psf_by_market,
         x='price_per_sqft',

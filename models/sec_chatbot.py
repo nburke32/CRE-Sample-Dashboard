@@ -3,14 +3,12 @@ SEC Filing Chatbot powered by Claude
 Analyzes SEC filings and answers questions using Claude API.
 """
 
-import os
-import json
 import logging
 import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+
 import anthropic
 
 
@@ -77,7 +75,7 @@ class SECChatbot:
         question: str,
         model: str = "claude-sonnet-4-5",
         company_name: str = "the company"
-    ) -> Dict:
+    ) -> dict:
         """
         Ask a question about a SEC filing.
 
@@ -152,7 +150,7 @@ Please provide a clear, accurate answer based on the filing content."""
             self.logger.error(f"API Error: {e}")
             raise Exception(f"Claude API error: {e}")
 
-    def get_usage_stats(self) -> Dict:
+    def get_usage_stats(self) -> dict:
         """
         Get API usage statistics from logs.
 
@@ -176,7 +174,7 @@ Please provide a clear, accurate answer based on the filing content."""
         cost_today = 0.0
         today = datetime.now().date()
 
-        with open(log_file, 'r') as f:
+        with open(log_file) as f:
             for line in f:
                 if "Cost:" in line:
                     total_calls += 1
@@ -218,7 +216,7 @@ Please provide a clear, accurate answer based on the filing content."""
         return text
 
     @staticmethod
-    def get_available_models() -> List[Dict[str, str]]:
+    def get_available_models() -> list[dict[str, str]]:
         """Get list of available Claude models."""
         return [
             {

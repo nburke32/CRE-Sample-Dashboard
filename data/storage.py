@@ -4,10 +4,9 @@ Currently supports: Parquet (local)
 Future: Snowflake (cloud)
 """
 
-import pandas as pd
-from pathlib import Path
 from datetime import datetime
-from typing import Optional
+
+import pandas as pd
 
 from .config import DATA_STORE_PATH, SEED_DATA_PATH, STORAGE_BACKEND
 
@@ -18,7 +17,7 @@ class DataStorage:
     Abstracts away the backend so we can switch from Parquet to Snowflake.
     """
 
-    def __init__(self, backend: Optional[str] = None):
+    def __init__(self, backend: str | None = None):
         self.backend = backend or STORAGE_BACKEND
         self._ensure_storage_exists()
 
@@ -31,7 +30,7 @@ class DataStorage:
     # PUBLIC API - Use these methods in the app
     # =========================================================================
 
-    def save_dataframe(self, df: pd.DataFrame, name: str, partition_by: Optional[str] = None) -> None:
+    def save_dataframe(self, df: pd.DataFrame, name: str, partition_by: str | None = None) -> None:
         """
         Save a DataFrame to storage.
 
@@ -45,7 +44,7 @@ class DataStorage:
         else:
             raise ValueError(f"Unknown storage backend: {self.backend}")
 
-    def load_dataframe(self, name: str, filters: Optional[dict] = None) -> Optional[pd.DataFrame]:
+    def load_dataframe(self, name: str, filters: dict | None = None) -> pd.DataFrame | None:
         """
         Load a DataFrame from storage.
 
@@ -61,7 +60,7 @@ class DataStorage:
         else:
             raise ValueError(f"Unknown storage backend: {self.backend}")
 
-    def get_last_updated(self, name: str) -> Optional[datetime]:
+    def get_last_updated(self, name: str) -> datetime | None:
         """Get the last update timestamp for a dataset."""
         if self.backend == "parquet":
             return self._get_parquet_modified_time(name)
@@ -101,7 +100,7 @@ class DataStorage:
         path = DATA_STORE_PATH / f"{name}.parquet"
         df.to_parquet(path, index=False, engine="pyarrow")
 
-    def _load_parquet(self, name: str, filters: Optional[dict] = None) -> Optional[pd.DataFrame]:
+    def _load_parquet(self, name: str, filters: dict | None = None) -> pd.DataFrame | None:
         """Load DataFrame from parquet file, falling back to seed data."""
         path = DATA_STORE_PATH / f"{name}.parquet"
         if not path.exists():
@@ -121,7 +120,7 @@ class DataStorage:
 
         return df
 
-    def _get_parquet_modified_time(self, name: str) -> Optional[datetime]:
+    def _get_parquet_modified_time(self, name: str) -> datetime | None:
         """Get parquet file modification time."""
         path = DATA_STORE_PATH / f"{name}.parquet"
         if path.exists():
