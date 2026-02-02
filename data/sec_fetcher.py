@@ -10,6 +10,8 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
+from .config import CACHE_TTL_SECONDS, SEC_MAX_FILING_CHARS, SEC_MIN_REQUEST_INTERVAL
+
 
 class SECFetcher:
     """Fetches and caches SEC filings from Edgar."""
@@ -44,7 +46,7 @@ class SECFetcher:
 
         # Rate limiting (SEC allows 10 req/sec max)
         self.last_request_time = 0
-        self.min_request_interval = 0.11  # Slightly over 0.1s to stay under 10/sec
+        self.min_request_interval = SEC_MIN_REQUEST_INTERVAL
 
     def _rate_limit(self):
         """Enforce rate limiting to comply with SEC policy (10 req/sec max)."""
@@ -59,29 +61,19 @@ class SECFetcher:
         return company["cik"] if company else None
 
     def get_company_submissions(self, ticker: str) -> dict:
-        """
-        Get all submissions for a company.
-
-        Args:
-            ticker: Stock ticker (e.g., 'AAPL')
-
-        Returns:
-            Dict with company info and filings list
-        """
+        """Get all submissions for a company."""
         cik = self._get_cik(ticker)
         if not cik:
             raise ValueError(f"Ticker {ticker} not in curated company list")
 
-        # Check cache first
         cache_file = self.cache_dir / f"{ticker}_submissions.json"
         if cache_file.exists():
             # Use cache if less than 1 day old
             cache_age = time.time() - cache_file.stat().st_mtime
-            if cache_age < 86400:  # 24 hours
+            if cache_age < CACHE_TTL_SECONDS:
                 with open(cache_file) as f:
                     return json.load(f)
 
-        # Fetch from SEC
         self._rate_limit()
         url = f"{self.BASE_URL}/submissions/CIK{cik}.json"
 
@@ -90,7 +82,6 @@ class SECFetcher:
             response.raise_for_status()
             data = response.json()
 
-            # Cache the result
             with open(cache_file, 'w') as f:
                 json.dump(data, f, indent=2)
 
@@ -100,16 +91,7 @@ class SECFetcher:
             raise Exception(f"Failed to fetch submissions for {ticker}: {e}")
 
     def get_latest_filing(self, ticker: str, form_type: str = "10-K") -> dict | None:
-        """
-        Get the latest filing of a specific type.
-
-        Args:
-            ticker: Stock ticker
-            form_type: Filing type (10-K, 10-Q, 8-K, etc.)
-
-        Returns:
-            Dict with filing details or None if not found
-        """
+        """Get the latest filing of a specific type."""
         submissions = self.get_company_submissions(ticker)
 
         recent_filings = submissions.get("filings", {}).get("recent", {})
@@ -133,26 +115,16 @@ class SECFetcher:
         return None
 
     def download_filing(self, filing: dict) -> str:
-        """
-        Download the full text of a filing.
-
-        Args:
-            filing: Filing dict from get_latest_filing()
-
-        Returns:
-            Full text of the filing (HTML)
-        """
+        """Download the full text of a filing."""
         ticker = filing["ticker"]
         accession = filing["accession_number"].replace("-", "")  # Remove dashes for URL
         primary_doc = filing["primary_document"]
         cik = filing["cik"]
 
-        # Check cache
         cache_file = self.cache_dir / f"{ticker}_{filing['form']}_{filing['filing_date']}.html"
         if cache_file.exists():
             return cache_file.read_text(encoding='utf-8')
 
-        # Download from SEC
         # URL format: https://www.sec.gov/Archives/edgar/data/CIK/ACCESSION-WITH-DASHES/DOCUMENT
         self._rate_limit()
         url = f"https://www.sec.gov/Archives/edgar/data/{cik.lstrip('0')}/{accession}/{primary_doc}"
@@ -162,7 +134,6 @@ class SECFetcher:
             response.raise_for_status()
             html_content = response.text
 
-            # Cache it
             cache_file.write_text(html_content, encoding='utf-8')
 
             return html_content
@@ -170,48 +141,24 @@ class SECFetcher:
         except requests.RequestException as e:
             raise Exception(f"Failed to download filing: {e}")
 
-    def extract_text_from_html(self, html: str, max_length: int = 500000) -> str:
-        """
-        Extract clean text from SEC filing HTML.
-
-        Args:
-            html: Raw HTML content
-            max_length: Maximum characters to return (for Claude context limits)
-
-        Returns:
-            Clean text content
-        """
-        # Parse HTML
+    def extract_text_from_html(self, html: str, max_length: int = SEC_MAX_FILING_CHARS) -> str:
+        """Extract clean text from SEC filing HTML, truncated to max_length for Claude context limits."""
         soup = BeautifulSoup(html, 'html.parser')
 
-        # Remove script and style elements
         for tag in soup(["script", "style", "table"]):
             tag.decompose()
 
-        # Get text
         text = soup.get_text(separator='\n')
 
-        # Clean up whitespace
         lines = [line.strip() for line in text.splitlines()]
         text = '\n'.join(line for line in lines if line)
-
-        # Truncate if too long
         if len(text) > max_length:
             text = text[:max_length] + "\n\n[... Document truncated for length ...]"
 
         return text
 
     def get_filing_text(self, ticker: str, form_type: str = "10-K") -> str | None:
-        """
-        Convenience method: Get clean text of latest filing.
-
-        Args:
-            ticker: Stock ticker
-            form_type: Filing type (10-K, 10-Q)
-
-        Returns:
-            Clean text of filing or None if not found
-        """
+        """Get clean text of latest filing."""
         filing = self.get_latest_filing(ticker, form_type)
         if not filing:
             return None

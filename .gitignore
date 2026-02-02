@@ -33,9 +33,7 @@ logs/
 # Python cache in data folder
 data/__pycache__/
 
-# Tests (keeping private for now)
-tests/
-pytest.ini
+# Test artifacts (keep tests themselves tracked for CI)
 TEST_RESULTS.md
 BUG_REPORT.md
 REAL_DATA_TESTING_REPORT.md

@@ -5,10 +5,17 @@
 """
 
 
+import sys
+from pathlib import Path
+
 import geopandas as gpd
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from data.config import CACHE_TTL_SECONDS, DEFAULT_BEARING, DEFAULT_PITCH
 
 st.set_page_config(page_title="Map View", page_icon="🗺️", layout="wide")
 
@@ -49,14 +56,14 @@ TYPE_LEGEND = {
 # DATA LOADING
 # =============================================================================
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_transactions():
     """Load geocoded transactions from parquet cache. Returns None if not cached."""
     from data.geocoder import NYCGeocoder
     return NYCGeocoder().get_geocoded_transactions()
 
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_matched_buildings():
     """Load Overture matched buildings from parquet cache. Returns None if not cached."""
     from data.overture_fetcher import OvertureFetcher
@@ -181,9 +188,6 @@ with st.sidebar:
 
     st.markdown("### \U0001F39B\ufe0f View Controls")
 
-    DEFAULT_PITCH = 45
-    DEFAULT_BEARING = -15
-
     def _reset_view():
         st.session_state.pitch = DEFAULT_PITCH
         st.session_state.bearing = DEFAULT_BEARING
@@ -261,7 +265,6 @@ if not txn.empty:
     txn["price_fmt"] = txn["sale_price"].apply(lambda v: f"${v:,.0f}" if pd.notna(v) else "—")
     txn["ppsf_fmt"] = txn["price_per_sqft"].apply(lambda v: f"${v:,.0f}" if pd.notna(v) else "—")
 
-# Upload data
 upload_df = None
 if uploaded_file:
     upload_df = parse_uploaded_file(uploaded_file)
@@ -274,7 +277,6 @@ if uploaded_file:
         else:
             upload_df = None
 
-# Map center
 if not txn.empty:
     center_lat, center_lng = txn["latitude"].mean(), txn["longitude"].mean()
 else:
@@ -308,7 +310,6 @@ with tab1:
         c3.metric("\U0001F4D0 Median $/SF", "\u2014")
     c4.metric("\U0001F4E4 Uploaded", f"{len(upload_df):,}" if upload_df is not None else "\u2014")
 
-    # Layers
     layers_t1 = []
     if not txn.empty:
         layers_t1.append(pdk.Layer(
@@ -335,7 +336,6 @@ with tab1:
     )
     st.pydeck_chart(deck1, use_container_width=True, height=600)
 
-    # Legend — only show types present in the current data
     if not txn.empty and "property_type" in txn.columns:
         active_types = txn["property_type"].dropna().unique()
         active_legend = {k: v for k, v in TYPE_LEGEND.items() if k in active_types}
@@ -348,7 +348,6 @@ with tab1:
     # Data table
     if not txn.empty:
         with st.expander("\U0001F4CA Transaction Data", expanded=False):
-            # Sort numerically first, then format for display
             table_df = txn.sort_values("sale_price", ascending=False).copy()
 
             # Pre-format numeric columns as strings (Streamlit sprintf doesn't support comma grouping)

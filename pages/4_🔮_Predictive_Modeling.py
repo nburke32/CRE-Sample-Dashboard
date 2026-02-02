@@ -8,13 +8,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.config import METROS, REIT_TICKERS
+from data.config import DEFAULT_MAX_SENTIMENT_ADJ, METROS, REIT_TICKERS, STREAMLIT_CACHE_TTL
 from data.fred_fetcher import FREDFetcher
 from data.storage import DataStorage
 from data.yfinance_fetcher import YFinanceFetcher
+from helpers import format_indicator_name, get_latest_valid
 
 st.set_page_config(page_title="Predictive Modeling", page_icon="🔮", layout="wide")
 
@@ -25,7 +25,7 @@ st.markdown("Forecast CRE market indicators using real economic data from FRED a
 # DATA LOADING & CACHING
 # =============================================================================
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
+@st.cache_data(ttl=STREAMLIT_CACHE_TTL)
 def load_fred_data(force_refresh: bool = False):
     """Load FRED data (national + metros)."""
     try:
@@ -35,7 +35,7 @@ def load_fred_data(force_refresh: bool = False):
         st.error(f"Error loading FRED data: {e}")
         return {"national": pd.DataFrame(), "metros": pd.DataFrame()}
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=STREAMLIT_CACHE_TTL)
 def load_reit_data(force_refresh: bool = False):
     """Load REIT price data."""
     try:
@@ -45,7 +45,7 @@ def load_reit_data(force_refresh: bool = False):
         st.error(f"Error loading REIT data: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=STREAMLIT_CACHE_TTL)
 def get_reit_sentiment():
     """Get current REIT sector sentiment."""
     try:
@@ -61,7 +61,7 @@ def run_prophet_forecast(_metro_df: pd.DataFrame, indicator: str, periods: int, 
     return forecast_metro_indicator(_metro_df, indicator, periods)
 
 @st.cache_data
-def calculate_market_scores(_metro_df: pd.DataFrame, _national_df: pd.DataFrame, _reit_df: pd.DataFrame, max_sentiment_adj: float = 0.20):
+def calculate_market_scores(_metro_df: pd.DataFrame, _national_df: pd.DataFrame, _reit_df: pd.DataFrame, max_sentiment_adj: float = DEFAULT_MAX_SENTIMENT_ADJ):
     """Calculate market strength scores with multiplicative sentiment."""
     from models.market_scoring import score_all_metros
     return score_all_metros(_metro_df, _national_df, _reit_df, max_sentiment_adj=max_sentiment_adj)
@@ -79,29 +79,24 @@ def get_methodology():
 with st.sidebar:
     st.markdown("### ⚙️ Settings")
 
-    # Initialize force_refresh state
     if "force_refresh" not in st.session_state:
         st.session_state["force_refresh"] = False
 
-    # Data refresh - use session state to trigger force refresh
     if st.button("🔄 Refresh Data", use_container_width=True):
         st.session_state["force_refresh"] = True
         st.cache_data.clear()
         st.rerun()
 
-    # Get force_refresh value and reset it after use
     force_refresh = st.session_state.get("force_refresh", False)
     if force_refresh:
         st.session_state["force_refresh"] = False  # Reset after this run
 
     st.markdown("---")
 
-    # Check data status
     storage = DataStorage()
     data_status = []
     stale_datasets = []
 
-    # Define staleness thresholds by data type
     staleness_thresholds = {
         "reit_prices": 3,      # Market data: 3 days (allows for weekends)
         "fred_national": 30,   # Economic indicators: monthly updates
@@ -115,7 +110,6 @@ with st.sidebar:
                 age_days = (datetime.now() - updated).days
                 data_status.append(f"✅ {dataset}: {updated.strftime('%m/%d %H:%M')}")
 
-                # Check if data is stale based on type-specific threshold
                 threshold = staleness_thresholds.get(dataset, 7)
                 if age_days > threshold:
                     data_type = "REIT sentiment" if dataset == "reit_prices" else "Economic indicators"
@@ -129,7 +123,6 @@ with st.sidebar:
     for status in data_status:
         st.caption(status)
 
-    # Show staleness warnings if needed
     if stale_datasets:
         for dataset, age_days, threshold, data_type in stale_datasets:
             st.warning(f"⚠️ {dataset} is {age_days} days old (>{threshold} day threshold). {data_type} may be inaccurate. Consider refreshing data.")
@@ -178,7 +171,6 @@ with st.sidebar:
 # MAIN CONTENT
 # =============================================================================
 
-# Load data (pass force_refresh from session state if set)
 with st.spinner("Loading economic data..." if not force_refresh else "Refreshing economic data from FRED..."):
     fred_data = load_fred_data(force_refresh=force_refresh)
     national_df = fred_data.get("national", pd.DataFrame())
@@ -187,7 +179,6 @@ with st.spinner("Loading economic data..." if not force_refresh else "Refreshing
 with st.spinner("Loading REIT data..." if not force_refresh else "Refreshing REIT data from YFinance..."):
     reit_df = load_reit_data(force_refresh=force_refresh)
 
-# Check if data is available
 if metros_df.empty:
     st.warning("⚠️ No metro data available. Click 'Refresh Data' in the sidebar to fetch data from FRED.")
     st.info("This will fetch economic indicators for 20 major CRE markets.")
@@ -200,7 +191,6 @@ st.markdown("---")
 # =============================================================================
 
 if analysis_type == "Metro Forecast":
-    # Filter metros that have data for the selected indicator
     available_metros = []
     for metro_code in METROS.keys():
         metro_data_check = metros_df[metros_df["metro_code"] == metro_code]
@@ -208,7 +198,6 @@ if analysis_type == "Metro Forecast":
             if metro_data_check[forecast_indicator].notna().sum() > 0:
                 available_metros.append(metro_code)
 
-    # Show metro selector with only available metros
     if not available_metros:
         st.error(f"No metros have {forecast_indicator} data available.")
         st.stop()
@@ -224,21 +213,18 @@ if analysis_type == "Metro Forecast":
 
     st.markdown(f"### 📍 {METROS[selected_metro]['name']} Forecast")
 
-    # Get metro data
     metro_data = metros_df[metros_df["metro_code"] == selected_metro].copy()
 
     if metro_data.empty:
         st.warning(f"No data available for {selected_metro}")
         st.stop()
 
-    # Check if indicator is available
     if forecast_indicator not in metro_data.columns or metro_data[forecast_indicator].isna().all():
         st.warning(f"No {forecast_indicator} data available for {selected_metro}. Try a different indicator.")
         available = [c for c in ["hpi", "unemployment"] if c in metro_data.columns and not metro_data[c].isna().all()]
         st.info(f"Available indicators: {', '.join(available) if available else 'None'}")
         st.stop()
 
-    # Run forecast
     with st.spinner("Running Prophet forecast..."):
         try:
             forecast_result, metrics = run_prophet_forecast(
@@ -251,18 +237,14 @@ if analysis_type == "Metro Forecast":
             metrics = {}
 
     if not forecast_result.empty:
-        # Split historical and forecast
         historical_end = metro_data["date"].max()
         historical_fit = forecast_result[forecast_result["date"] <= historical_end]
         future = forecast_result[forecast_result["date"] > historical_end]
 
-        # Get actual (non-interpolated) historical data
         actual_data = metro_data[["date", forecast_indicator]].dropna()
 
-        # Create forecast chart
         fig = go.Figure()
 
-        # Interpolated/fitted historical line (shows what Prophet learned)
         fig.add_trace(go.Scatter(
             x=historical_fit["date"],
             y=historical_fit["forecast"],
@@ -272,7 +254,6 @@ if analysis_type == "Metro Forecast":
             opacity=0.6
         ))
 
-        # Actual historical values (real data points only)
         fig.add_trace(go.Scatter(
             x=actual_data["date"],
             y=actual_data[forecast_indicator],
@@ -281,7 +262,6 @@ if analysis_type == "Metro Forecast":
             marker=dict(color="#636EFA", size=8)
         ))
 
-        # Future forecast
         fig.add_trace(go.Scatter(
             x=future["date"],
             y=future["forecast"],
@@ -291,7 +271,6 @@ if analysis_type == "Metro Forecast":
             marker=dict(size=5)
         ))
 
-        # Confidence interval for future
         fig.add_trace(go.Scatter(
             x=pd.concat([future["date"], future["date"][::-1]]),
             y=pd.concat([future["upper_bound"], future["lower_bound"][::-1]]),
@@ -317,11 +296,9 @@ if analysis_type == "Metro Forecast":
 
         st.plotly_chart(fig, use_container_width=True)
 
-        # Metrics
         col1, col2, col3, col4 = st.columns(4)
 
         if metrics:
-            # Determine precision and delta color based on indicator
             if forecast_indicator == "unemployment":
                 precision = 2  # More precision for unemployment (small changes matter)
                 delta_color = "inverse"  # Rising unemployment = bad = red
@@ -347,7 +324,6 @@ if analysis_type == "Metro Forecast":
             with col4:
                 st.metric("Upper Bound (95% CI)", f"{metrics['forecast_upper']:.{precision}f}")
 
-        # Add explanatory note for HPI
         if forecast_indicator == "hpi" and metrics:
             current_hpi = metrics.get('current_value', 437)
             base_hpi = 100
@@ -379,7 +355,6 @@ if analysis_type == "Metro Forecast":
                 If a home cost **\${example_price_1995:,.0f}** in 1995 (HPI = 100), at today's HPI of {current_hpi:.0f}, that same home would cost approximately **\${example_price_today:,.0f}**.
                 """)
 
-        # Add explanatory note for Unemployment Rate
         if forecast_indicator == "unemployment" and metrics:
             current_rate = metrics.get('current_value', 0)
             forecast_rate = metrics.get('forecast_end', 0)
@@ -500,20 +475,17 @@ elif analysis_type == "Market Rankings":
             sentiment = {}
 
     if not scores.empty:
-        # Show data coverage info
         scored_metros = len(scores)
         total_metros = len(METROS)
         if scored_metros < total_metros:
             missing = set(METROS.keys()) - set(scores["metro_code"].unique())
             st.info(f"ℹ️ Scoring {scored_metros} of {total_metros} metros. Missing: {', '.join(sorted(missing))} (insufficient data for growth rate calculations)")
 
-        # Sentiment indicator
         composite_sentiment = sentiment.get("composite", 0)
         sentiment_pct = composite_sentiment * max_sentiment_pct  # User-selected max adjustment
 
         st.markdown("#### 📊 Current Market Sentiment")
 
-        # Main sentiment metric
         sent_metric_col1, sent_metric_col2 = st.columns([1, 3])
         with sent_metric_col1:
             if sentiment_pct >= 0:
@@ -522,7 +494,6 @@ elif analysis_type == "Market Rankings":
                 st.metric("REIT Sentiment", "Negative", f"{sentiment_pct:.1f}%")
 
         with sent_metric_col2:
-            # Sentiment gauge
             sentiment_desc = (
                 "Strong bullish signal from REITs" if sentiment_pct > 10 else
                 "Moderately positive market outlook" if sentiment_pct > 3 else
@@ -536,7 +507,6 @@ elif analysis_type == "Market Rankings":
 
         st.markdown("---")
 
-        # Top/Bottom markets with enhanced info
         col1, col2 = st.columns(2)
 
         with col1:
@@ -557,14 +527,12 @@ elif analysis_type == "Market Rankings":
                 bottom_5["base_score"] = bottom_5["base_score"].round(1)
             st.dataframe(bottom_5, hide_index=True, use_container_width=True)
 
-        # Chart tabs
         # Sort by rank descending (rank 1 at top of horizontal chart) to maintain tie-breaking order
         chart_df = scores.sort_values("rank", ascending=False).copy()
 
         chart_tab1, chart_tab2 = st.tabs(["Final Scores", "Score Breakdown"])
 
         with chart_tab1:
-            # Clean final score chart with color gradient
             fig1 = go.Figure()
 
             fig1.add_trace(go.Bar(
@@ -591,7 +559,6 @@ elif analysis_type == "Market Rankings":
             st.plotly_chart(fig1, use_container_width=True)
 
         with chart_tab2:
-            # Stacked bar showing base score + sentiment contribution
             # Calculate sentiment_contribution if not present (for cache compatibility)
             if "base_score" in chart_df.columns and "sentiment_contribution" not in chart_df.columns:
                 sentiment_adj = chart_df["sentiment_adjustment"].iloc[0] if "sentiment_adjustment" in chart_df.columns else 0
@@ -600,7 +567,6 @@ elif analysis_type == "Market Rankings":
             if "base_score" in chart_df.columns:
                 fig2 = go.Figure()
 
-                # Get sentiment direction
                 sentiment_adj = chart_df["sentiment_adjustment"].iloc[0] if "sentiment_adjustment" in chart_df.columns else 0
                 is_positive = sentiment_adj >= 0
 
@@ -665,7 +631,6 @@ elif analysis_type == "Market Rankings":
                 )
                 st.plotly_chart(fig2, use_container_width=True)
 
-                # Show the actual sentiment adjustment info
                 avg_contribution = chart_df["sentiment_contribution"].mean()
                 if is_positive:
                     st.caption(
@@ -680,7 +645,6 @@ elif analysis_type == "Market Rankings":
             else:
                 st.warning("Base score data not available for breakdown chart.")
 
-        # Regional breakdown
         if "region" in scores.columns:
             st.markdown("#### 🗺️ Regional Analysis")
 
@@ -708,7 +672,6 @@ elif analysis_type == "Market Rankings":
                 fig.update_layout(showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
 
-        # Feature breakdown
         with st.expander("📊 Score Components (Backward-Looking Fundamentals)"):
             feature_cols = [
                 "metro_code", "metro_name", "region", "base_score", "strength_score",
@@ -719,13 +682,11 @@ elif analysis_type == "Market Rankings":
             available_cols = [c for c in feature_cols if c in scores.columns]
             if available_cols:
                 display_df = scores[available_cols].copy()
-                # Round numeric columns
                 for col in display_df.columns:
                     if display_df[col].dtype in ["float64", "int64"]:
                         display_df[col] = display_df[col].round(2)
                 st.dataframe(display_df, hide_index=True, use_container_width=True)
 
-        # Data quality indicator
         if "imputed_count" in scores.columns:
             imputed_metros = scores[scores["imputed_count"] > 0]
             if not imputed_metros.empty:
@@ -781,7 +742,6 @@ elif analysis_type == "Market Rankings":
                 for note in methodology["data_notes"]:
                     st.caption(f"  • {note}")
 
-        # Enhanced sentiment breakdown at bottom with time-travel
         st.markdown("---")
         st.markdown("### 🎯 REIT Sentiment Deep Dive")
 
@@ -818,13 +778,11 @@ elif analysis_type == "Market Rankings":
                         help="Choose any historical date to see how sentiment was calculated at that time"
                     )
 
-                # Convert to datetime
                 selected_end_datetime = pd.Timestamp(selected_end_date)
                 lookback_start_date = selected_end_datetime - timedelta(days=30)
 
                 st.caption(f"📅 Analyzing REIT momentum from **{lookback_start_date.date()}** to **{selected_end_datetime.date()}**")
 
-                # Recalculate sentiment for selected time window
                 from models.market_scoring import CRE_SECTOR_WEIGHTS
 
                 time_travel_reit = reit_df[
@@ -881,18 +839,15 @@ elif analysis_type == "Market Rankings":
                             else:
                                 st.metric("🎯 Composite Total", f"{composite_contribution:.2f}%", help="Sum of all weighted sector contributions")
 
-                        # Create gauge chart for each sector
                         import plotly.graph_objects as go
 
                         fig = go.Figure()
 
-                        # Add individual sector bars
                         for i, sector_data in enumerate(sector_breakdown):
                             contribution = sector_data["Contribution"]
                             sector_name = sector_data["Sector"]
                             weight = sector_data["Weight"]
 
-                            # Create horizontal bar showing contribution
                             color = "green" if contribution >= 0 else "red"
                             fig.add_trace(go.Bar(
                                 y=[sector_name],
@@ -916,7 +871,6 @@ elif analysis_type == "Market Rankings":
 
                         st.plotly_chart(fig, use_container_width=True)
 
-                        # Sector summary
                         st.markdown("#### 📋 Sector Details")
                         breakdown_display = pd.DataFrame([{
                             "Sector": s["Sector"],
@@ -926,7 +880,6 @@ elif analysis_type == "Market Rankings":
                         } for s in sector_breakdown])
                         st.dataframe(breakdown_display, use_container_width=True, hide_index=True)
 
-                        # Mixed sector explanation
                         st.markdown("---")
                         st.markdown("#### 🔄 Understanding Mixed Positive/Negative Sectors")
 
@@ -951,19 +904,16 @@ elif analysis_type == "Market Rankings":
                         st.markdown("---")
                         st.markdown("#### 🧮 Calculation Steps")
 
-                        # Step 1: Weighted average
                         avg_return = total_weighted_return / total_weight if total_weight > 0 else 0
                         st.caption(f"**Step 1 - Weighted Average Return:** {avg_return:+.2f}%")
                         st.caption(f"  → Sum of all contributions: {total_weighted_return:+.2f}%")
                         st.caption(f"  → Divided by total weight: {total_weight:.2f}")
 
-                        # Step 2: Normalization
                         normalized = np.clip(avg_return / 10.0, -1.0, 1.0)
                         st.caption(f"**Step 2 - Normalize to [-1, +1]:** {normalized:+.3f}")
                         st.caption(f"  → Divide by 10% (typical monthly REIT range): {avg_return:+.2f}% ÷ 10% = {normalized:+.3f}")
                         st.caption("  → Clipped to [-1, +1] range")
 
-                        # Step 3: Apply max adjustment
                         final_sentiment_pct = normalized * max_sentiment_pct
                         st.caption(f"**Step 3 - Apply Max Adjustment:** {final_sentiment_pct:+.1f}%")
                         st.caption(f"  → Multiply by user slider setting: {normalized:+.3f} × {max_sentiment_pct:.0f}% = {final_sentiment_pct:+.1f}%")
@@ -978,7 +928,6 @@ elif analysis_type == "Market Rankings":
                         - Positive sentiment boosts all scores proportionally
                         """)
 
-                        # Key insights
                         st.markdown("#### 💡 Key Insights")
                         st.markdown("""
                         **How the mechanism works:**
@@ -1008,7 +957,6 @@ elif analysis_type == "Value Opportunities":
     st.markdown("### 💎 Value Opportunities")
     st.markdown("When sentiment is negative, which metros have the strongest fundamentals? And within each metro, which sector is best positioned?")
 
-    # Calculate scores with default sentiment adjustment
     with st.spinner("Analyzing market fundamentals..."):
         try:
             scores, features, sentiment = calculate_market_scores(metros_df, national_df, reit_df, max_sentiment_adj=0.20)
@@ -1018,10 +966,8 @@ elif analysis_type == "Value Opportunities":
             sentiment = {}
 
     if not scores.empty and reit_df is not None and not reit_df.empty:
-        # Get composite sentiment
         composite_sentiment = sentiment.get("composite", 0)
 
-        # Current sentiment indicator
         st.markdown("#### 📊 Current Market Sentiment")
         if composite_sentiment < 0:
             st.error(f"**Negative Sentiment: {composite_sentiment*100:.1f}%** — Value opportunity conditions present")
@@ -1041,11 +987,9 @@ elif analysis_type == "Value Opportunities":
         value_df["sentiment_drag"] = value_df["sentiment_contribution"]
         value_df = value_df.sort_values("base_score", ascending=False)
 
-        # Display top metros by fundamentals
         col1, col2 = st.columns([2, 1])
 
         with col1:
-            # Bar chart of base scores
             fig = px.bar(
                 value_df.head(10),
                 x="base_score",
@@ -1078,7 +1022,6 @@ elif analysis_type == "Value Opportunities":
             During negative sentiment, high base scores indicate metros with strong underlying economics that may be undervalued by the market.
             """)
 
-        # Sentiment-adjusted Full Metro Rankings
         st.caption("Adjust how heavily REIT-based sentiment influences the Adjusted Score below. "
                    "This only affects the Full Metro Rankings breakdown — the fundamentals chart above is unchanged.")
         value_sentiment_pct = st.slider(
@@ -1094,7 +1037,6 @@ elif analysis_type == "Value Opportunities":
         # Scale so 100% on slider = max_sentiment_adj of 2.0 (full swing)
         value_sentiment_adj = (value_sentiment_pct / 100.0) * 2.0
 
-        # Re-score with user-selected sentiment weight
         fmr_scores, _, _ = calculate_market_scores(metros_df, national_df, reit_df, max_sentiment_adj=value_sentiment_adj)
         fmr_df = fmr_scores[["metro_code", "metro_name", "base_score", "strength_score", "sentiment_contribution", "region"]].copy()
         fmr_df = fmr_df.sort_values("base_score", ascending=False)
@@ -1110,17 +1052,14 @@ elif analysis_type == "Value Opportunities":
 
         st.markdown("---")
 
-        # Sector breakdown
         st.markdown("#### 🏢 Sector Performance by REIT Momentum")
         st.markdown("*Which property types are showing relative strength?*")
 
-        # Calculate sector returns from REIT data
         recent_date = reit_df["date"].max()
         lookback_date = recent_date - timedelta(days=30)
         recent_reit = reit_df[reit_df["date"] >= lookback_date]
 
         if not recent_reit.empty:
-            # Group by sector and calculate average return
             sector_perf = recent_reit.groupby("sector").agg(
                 avg_return=("pct_change", "mean"),
                 ticker_count=("ticker", "nunique")
@@ -1128,7 +1067,6 @@ elif analysis_type == "Value Opportunities":
             sector_perf["cumulative_30d"] = sector_perf["avg_return"] * 30  # Approximate 30-day return
             sector_perf = sector_perf.sort_values("cumulative_30d", ascending=False)
 
-            # Rename sectors for display
             sector_names = {
                 "broad": "Broad Market",
                 "office": "Office",
@@ -1141,7 +1079,6 @@ elif analysis_type == "Value Opportunities":
             }
             sector_perf["sector_name"] = sector_perf["sector"].map(sector_names).fillna(sector_perf["sector"])
 
-            # Bar chart
             colors = ["green" if x > 0 else "red" for x in sector_perf["cumulative_30d"]]
             fig = px.bar(
                 sector_perf,
@@ -1164,7 +1101,6 @@ elif analysis_type == "Value Opportunities":
             )
             st.plotly_chart(fig, use_container_width=True)
 
-            # Sector recommendations based on current conditions
             st.markdown("#### 💡 Sector Insights")
 
             best_sectors = sector_perf[sector_perf["cumulative_30d"] > 0]["sector_name"].tolist()
@@ -1184,7 +1120,6 @@ elif analysis_type == "Value Opportunities":
                 else:
                     st.info("No sectors showing significant weakness")
 
-        # Value thesis summary
         st.markdown("---")
         st.markdown("#### 📝 Value Thesis Summary")
 
@@ -1225,11 +1160,9 @@ elif analysis_type == "REIT Sentiment":
         st.warning("No REIT data available. Click 'Refresh Data' to fetch.")
         st.stop()
 
-    # Sector performance
     sentiment = get_reit_sentiment()
 
     if not sentiment.empty:
-        # Sector cards
         cols = st.columns(4)
         for i, (_, row) in enumerate(sentiment.iterrows()):
             col = cols[i % 4]
@@ -1246,13 +1179,11 @@ elif analysis_type == "REIT Sentiment":
 
         st.markdown("---")
 
-    # Sector selector
     sectors = list(reit_df["sector"].unique())
     selected_sector = st.selectbox("Select Sector", sectors, format_func=lambda x: x.replace("_", " ").title())
 
     sector_data = reit_df[reit_df["sector"] == selected_sector]
 
-    # Price chart
     fig = px.line(
         sector_data,
         x="date",
@@ -1264,12 +1195,10 @@ elif analysis_type == "REIT Sentiment":
     fig.update_layout(hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Ticker details - Show all contributing REITs
     with st.expander("📋 All Contributing REIT Tickers"):
         st.markdown("**All REITs used in this dashboard for market sentiment analysis:**")
         st.markdown("---")
 
-        # Group by sector
         sectors_grouped = {}
         for ticker, info in REIT_TICKERS.items():
             sector = info["sector"]
@@ -1277,7 +1206,6 @@ elif analysis_type == "REIT Sentiment":
                 sectors_grouped[sector] = []
             sectors_grouped[sector].append((ticker, info["name"]))
 
-        # Display by sector
         for sector, tickers in sorted(sectors_grouped.items()):
             st.markdown(f"**{sector.replace('_', ' ').title()}**")
             for ticker, name in sorted(tickers):
@@ -1299,16 +1227,6 @@ elif analysis_type == "Economic Overview":
     # Get latest values and calculate changes
     sorted_df = national_df.sort_values("date")
 
-    def get_latest_valid(column):
-        """Get most recent non-null value and a ~1 month prior value for delta."""
-        valid = sorted_df[sorted_df[column].notna()]
-        if valid.empty:
-            return None, None
-        latest_row = valid.iloc[-1]
-        prev_data = valid[valid["date"] <= (latest_row["date"] - pd.Timedelta(days=25))]
-        prev_row = prev_data.iloc[-1] if not prev_data.empty else None
-        return latest_row, prev_row
-
     # For backward compat: latest row for date reference
     latest = sorted_df.iloc[-1]
     prev_fallback = sorted_df[sorted_df["date"] <= (latest["date"] - pd.Timedelta(days=25))]
@@ -1321,7 +1239,7 @@ elif analysis_type == "Economic Overview":
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
-        cur, prv = get_latest_valid("treasury_10y")
+        cur, prv = get_latest_valid(sorted_df, "treasury_10y")
         if cur is not None:
             delta = cur["treasury_10y"] - prv["treasury_10y"] if prv is not None else None
             st.metric(
@@ -1331,7 +1249,7 @@ elif analysis_type == "Economic Overview":
                 delta_color="inverse"
             )
     with col2:
-        cur, prv = get_latest_valid("mortgage_30y")
+        cur, prv = get_latest_valid(sorted_df, "mortgage_30y")
         if cur is not None:
             delta = cur["mortgage_30y"] - prv["mortgage_30y"] if prv is not None else None
             st.metric(
@@ -1341,7 +1259,7 @@ elif analysis_type == "Economic Overview":
                 delta_color="inverse"
             )
     with col3:
-        cur, prv = get_latest_valid("fed_funds")
+        cur, prv = get_latest_valid(sorted_df, "fed_funds")
         if cur is not None:
             delta = cur["fed_funds"] - prv["fed_funds"] if prv is not None else None
             st.metric(
@@ -1351,7 +1269,7 @@ elif analysis_type == "Economic Overview":
                 delta_color="inverse"
             )
     with col4:
-        cur, prv = get_latest_valid("unemployment_national")
+        cur, prv = get_latest_valid(sorted_df, "unemployment_national")
         if cur is not None:
             delta = cur["unemployment_national"] - prv["unemployment_national"] if prv is not None else None
             st.metric(
@@ -1361,7 +1279,7 @@ elif analysis_type == "Economic Overview":
                 delta_color="inverse"
             )
     with col5:
-        cur, prv = get_latest_valid("cre_delinquency")
+        cur, prv = get_latest_valid(sorted_df, "cre_delinquency")
         if cur is not None:
             delta = cur["cre_delinquency"] - prv["cre_delinquency"] if prv is not None else None
             st.metric(
@@ -1384,29 +1302,6 @@ elif analysis_type == "Economic Overview":
         "🏦 CRE Credit"
     ])
 
-    # Helper function for cleaner indicator labels
-    def format_indicator_name(name):
-        labels = {
-            "treasury_10y": "10-Year Treasury",
-            "treasury_2y": "2-Year Treasury",
-            "mortgage_30y": "30-Year Mortgage",
-            "fed_funds": "Fed Funds Rate",
-            "housing_starts": "Housing Starts",
-            "building_permits": "Building Permits",
-            "construction_spending": "Total Construction",
-            "commercial_construction": "Commercial Construction",
-            "retail_sales": "Retail Sales",
-            "consumer_sentiment": "Consumer Sentiment",
-            "unemployment_national": "Unemployment Rate",
-            "payrolls": "Nonfarm Payrolls",
-            "industrial_production": "Industrial Production",
-            "cre_loans": "CRE Loans Outstanding",
-            "cre_delinquency": "CRE Delinquency Rate",
-            "cpi": "Consumer Price Index",
-            "gdp": "GDP"
-        }
-        return labels.get(name, name.replace("_", " ").title())
-
     # TAB 1: Interest Rates
     with tab1:
         st.markdown("##### Interest Rate Environment")
@@ -1420,7 +1315,7 @@ elif analysis_type == "Economic Overview":
             rate_metrics = st.columns(len(available_rates))
             for i, col_name in enumerate(available_rates):
                 with rate_metrics[i]:
-                    cur, prv = get_latest_valid(col_name)
+                    cur, prv = get_latest_valid(sorted_df, col_name)
                     if cur is not None:
                         current = cur[col_name]
                         delta = current - prv[col_name] if prv is not None else None
@@ -1448,7 +1343,6 @@ elif analysis_type == "Economic Overview":
             fig.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02))
             st.plotly_chart(fig, use_container_width=True)
 
-            # Yield curve spread
             if "treasury_10y" in national_df.columns and "treasury_2y" in national_df.columns:
                 spread_df = national_df[["date", "treasury_10y", "treasury_2y"]].dropna()
                 spread_df["yield_spread"] = spread_df["treasury_10y"] - spread_df["treasury_2y"]
@@ -1485,11 +1379,10 @@ elif analysis_type == "Economic Overview":
         available_construction = [c for c in construction_cols if c in national_df.columns]
 
         if available_construction:
-            # Construction metrics
             const_metrics = st.columns(min(len(available_construction), 4))
             for i, col_name in enumerate(available_construction[:4]):
                 with const_metrics[i]:
-                    cur, prv = get_latest_valid(col_name)
+                    cur, prv = get_latest_valid(sorted_df, col_name)
                     if cur is not None:
                         current = cur[col_name]
                         previous = prv[col_name] if prv is not None else None
@@ -1505,10 +1398,8 @@ elif analysis_type == "Economic Overview":
                             f"{delta_pct:+.1f}%" if delta_pct else None
                         )
 
-            # Split into two charts
             col1, col2 = st.columns(2)
 
-            # Construction spending chart
             spending_cols = ["construction_spending", "commercial_construction"]
             available_spending = [c for c in spending_cols if c in national_df.columns]
             if available_spending:
@@ -1529,7 +1420,6 @@ elif analysis_type == "Economic Overview":
                     fig.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02))
                     st.plotly_chart(fig, use_container_width=True)
 
-            # Housing permits/starts chart
             housing_cols = ["housing_starts", "building_permits"]
             available_housing = [c for c in housing_cols if c in national_df.columns]
             if available_housing:
@@ -1560,11 +1450,10 @@ elif analysis_type == "Economic Overview":
         available_consumer = [c for c in consumer_cols if c in national_df.columns]
 
         if available_consumer:
-            # Consumer metrics
             cons_metrics = st.columns(len(available_consumer))
             for i, col_name in enumerate(available_consumer):
                 with cons_metrics[i]:
-                    cur, prv = get_latest_valid(col_name)
+                    cur, prv = get_latest_valid(sorted_df, col_name)
                     if cur is not None:
                         current = cur[col_name]
                         previous = prv[col_name] if prv is not None else None
@@ -1584,7 +1473,6 @@ elif analysis_type == "Economic Overview":
 
             col1, col2 = st.columns(2)
 
-            # Retail sales chart
             if "retail_sales" in national_df.columns:
                 with col1:
                     retail_df = national_df[["date", "retail_sales"]].dropna()
@@ -1601,7 +1489,6 @@ elif analysis_type == "Economic Overview":
                     fig.update_layout(hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
 
-            # Consumer sentiment chart
             if "consumer_sentiment" in national_df.columns:
                 with col2:
                     sent_df = national_df[["date", "consumer_sentiment"]].dropna()
@@ -1630,11 +1517,10 @@ elif analysis_type == "Economic Overview":
         available_labor = [c for c in labor_cols if c in national_df.columns]
 
         if available_labor:
-            # Labor metrics
             labor_metrics = st.columns(len(available_labor))
             for i, col_name in enumerate(available_labor):
                 with labor_metrics[i]:
-                    cur, prv = get_latest_valid(col_name)
+                    cur, prv = get_latest_valid(sorted_df, col_name)
                     if cur is not None:
                         current = cur[col_name]
                         previous = prv[col_name] if prv is not None else None
@@ -1656,7 +1542,6 @@ elif analysis_type == "Economic Overview":
 
             col1, col2 = st.columns(2)
 
-            # Payrolls chart
             if "payrolls" in national_df.columns:
                 with col1:
                     pay_df = national_df[["date", "payrolls"]].dropna()
@@ -1673,7 +1558,6 @@ elif analysis_type == "Economic Overview":
                     fig.update_layout(hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
 
-            # Industrial production chart
             if "industrial_production" in national_df.columns:
                 with col2:
                     ind_df = national_df[["date", "industrial_production"]].dropna()
@@ -1691,7 +1575,6 @@ elif analysis_type == "Economic Overview":
                                "mining, and utilities, indexed to 2017 = 100. Rising production typically signals increased "
                                "demand for warehouse, distribution, and logistics CRE.")
 
-            # Unemployment chart (if not already shown)
             if "unemployment_national" in national_df.columns:
                 unemp_df = national_df[["date", "unemployment_national"]].dropna()
 
@@ -1718,11 +1601,10 @@ elif analysis_type == "Economic Overview":
         available_cre = [c for c in cre_cols if c in national_df.columns]
 
         if available_cre:
-            # CRE metrics
             cre_metrics = st.columns(len(available_cre))
             for i, col_name in enumerate(available_cre):
                 with cre_metrics[i]:
-                    cur, prv = get_latest_valid(col_name)
+                    cur, prv = get_latest_valid(sorted_df, col_name)
                     if cur is not None:
                         current = cur[col_name]
                         previous = prv[col_name] if prv is not None else None
@@ -1739,7 +1621,6 @@ elif analysis_type == "Economic Overview":
 
             col1, col2 = st.columns(2)
 
-            # CRE loans outstanding
             if "cre_loans" in national_df.columns:
                 with col1:
                     loans_df = national_df[["date", "cre_loans"]].dropna()
@@ -1754,7 +1635,6 @@ elif analysis_type == "Economic Overview":
                     fig.update_layout(hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
 
-            # CRE delinquency
             if "cre_delinquency" in national_df.columns:
                 with col2:
                     delq_df = national_df[["date", "cre_delinquency"]].dropna()
@@ -1767,7 +1647,6 @@ elif analysis_type == "Economic Overview":
                         labels={"cre_delinquency": "Rate (%)", "date": "Date"}
                     )
                     fig.update_traces(fillcolor="rgba(239, 85, 59, 0.3)", line_color="#EF553B")
-                    # Add warning threshold
                     fig.add_hline(y=2, line_dash="dash", line_color="orange", annotation_text="Elevated Risk")
                     fig.add_hline(y=5, line_dash="dash", line_color="red", annotation_text="Distress")
                     fig.update_layout(hovermode="x unified")

@@ -17,6 +17,8 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
+from data.config import DEFAULT_MAX_SENTIMENT_ADJ
+
 # Regional groupings for percentile ranking
 REGIONS = {
     "Northeast": ["NYC", "BOS", "PHI"],
@@ -52,7 +54,7 @@ class MarketStrengthModel:
     """
 
     # Maximum sentiment adjustment (caps at ±20%)
-    MAX_SENTIMENT_ADJUSTMENT = 0.20
+    MAX_SENTIMENT_ADJUSTMENT = DEFAULT_MAX_SENTIMENT_ADJ
 
     def __init__(self):
         self.sentiment_score = None  # Cached REIT sentiment
@@ -102,7 +104,6 @@ class MarketStrengthModel:
                 "date": metro_data.iloc[-1]["date"],
             }
 
-            # Track data quality - which features have real data
             data_quality = {"real": [], "missing": []}
 
             # HPI features - QUARTERLY data, find most recent non-null values
@@ -165,7 +166,6 @@ class MarketStrengthModel:
 
         features_df = pd.DataFrame(features_list)
 
-        # Add national context
         if not national_df.empty:
             latest_national = national_df.sort_values("date").iloc[-1]
 
@@ -177,7 +177,6 @@ class MarketStrengthModel:
             if "fed_funds" in latest_national:
                 features_df["fed_funds"] = latest_national["fed_funds"]
 
-        # Add REIT sentiment (if available)
         if reit_df is not None and not reit_df.empty:
             latest_date = reit_df["date"].max()
             recent_reit = reit_df[reit_df["date"] >= latest_date - timedelta(days=30)]
@@ -278,35 +277,29 @@ class MarketStrengthModel:
             "population_growth_1y": 0.20,     # Population growth (demand driver)
         }
 
-        # Normalize each feature to 0-100 scale
         score_components = {}
         imputation_flags = {}
 
         for feature, weight in weights.items():
             if feature in features_df.columns:
-                # Track which values are imputed
                 is_missing = features_df[feature].isna()
                 imputation_flags[f"{feature}_imputed"] = is_missing
 
-                # Use median for missing values
                 median_val = features_df[feature].median()
                 if pd.isna(median_val):
                     median_val = 0  # Fallback if all values are NaN
                 values = features_df[feature].fillna(median_val)
 
-                # Normalize to 0-100
                 if values.std() > 0:
                     normalized = (values - values.min()) / (values.max() - values.min()) * 100
                 else:
                     normalized = pd.Series([50] * len(values), index=values.index)
 
-                # Flip if negative weight
                 if weight < 0:
                     normalized = 100 - normalized
 
                 score_components[feature] = normalized * abs(weight)
 
-        # Calculate total score
         if score_components:
             score_df = pd.DataFrame(score_components)
             result["base_score"] = score_df.sum(axis=1)
@@ -321,12 +314,10 @@ class MarketStrengthModel:
         else:
             result["base_score"] = 50
 
-        # Add individual component values for transparency
         for feature in weights.keys():
             if feature in features_df.columns:
                 result[feature] = features_df[feature]
 
-        # Add imputation count for each metro
         if imputation_flags:
             impute_df = pd.DataFrame(imputation_flags)
             result["imputed_count"] = impute_df.sum(axis=1)
