@@ -120,7 +120,7 @@ This project uses `.env` files and Streamlit secrets for local development, whic
 
 **Secrets Management:**
 - **Local/Personal**: `.env` files, Streamlit `secrets.toml` (gitignored)
-- **Enterprise Development**: OS keyring, HashiCorp Vault, or team-managed secret stores — even on a developer's machine, credentials shouldn't sit in plaintext files
+- **Enterprise Development**: OS keyring, Azure Key Vault, or team-managed secret stores — even on a developer's machine, credentials shouldn't sit in plaintext files
 - **Production**: Azure Key Vault, AWS Secrets Manager, GCP Secret Manager — secrets are injected at runtime, never stored alongside code
 
 **CI/CD & Deployment:**
