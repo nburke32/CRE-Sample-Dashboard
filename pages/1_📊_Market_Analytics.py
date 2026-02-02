@@ -6,9 +6,9 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from data.config import CACHE_TTL_SECONDS
 from data.nyc_opendata_fetcher import fetch_nyc_property_sales
 from data.storage import DataStorage
 
@@ -21,7 +21,7 @@ st.markdown("---")
 # =============================================================================
 # REAL NYC PROPERTY DATA
 # =============================================================================
-@st.cache_data(ttl=86400)  # 24 hours
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_nyc_transactions(force_refresh: bool = False):
     """
     Load NYC commercial property sales data.
@@ -43,7 +43,6 @@ def load_nyc_transactions(force_refresh: bool = False):
         st.warning("⚠️ No NYC property data available. Click 'Refresh Data' in the sidebar.")
         return pd.DataFrame()
 
-    # Rename columns to match expected format
     df = df.rename(columns={
         'sale_date': 'date',
         'borough': 'market',
@@ -51,7 +50,6 @@ def load_nyc_transactions(force_refresh: bool = False):
         'gross_square_feet': 'sqft'
     })
 
-    # Add property_name from address
     if 'address' in df.columns:
         df['property_name'] = df['address'].fillna('Unknown Address')
     else:
@@ -67,14 +65,12 @@ df = load_nyc_transactions()
 with st.sidebar:
     st.markdown("### ⚙️ Settings")
 
-    # Data refresh button
     if st.button("🔄 Refresh NYC Data", use_container_width=True):
         st.cache_data.clear()
         df = load_nyc_transactions(force_refresh=True)
         st.success("✅ Data refreshed!")
         st.rerun()
 
-    # Data status
     storage = DataStorage()
     if storage.dataset_exists("nyc_property_sales"):
         last_updated = storage.get_last_updated("nyc_property_sales")
@@ -84,10 +80,8 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🔍 Filters")
 
-# Only show filters if data is available
 if not df.empty:
     with st.sidebar:
-        # Date range
         date_range = st.date_input(
             "Date Range",
             value=(df['date'].min(), df['date'].max()),
@@ -95,21 +89,18 @@ if not df.empty:
             max_value=df['date'].max()
         )
 
-        # Property type filter
         property_types = st.multiselect(
             "Property Type",
             options=sorted(df['property_type'].unique()),
             default=df['property_type'].unique()
         )
 
-        # Market filter (Borough)
         markets = st.multiselect(
             "Borough",
             options=sorted(df['market'].unique()),
             default=df['market'].unique()
         )
 
-        # Price range
         price_min, price_max = st.slider(
             "Price Range ($M)",
             min_value=0,
@@ -125,7 +116,6 @@ if not df.empty:
         st.caption(f"Last {months_span} months")
         st.caption("[View Dataset →](https://data.cityofnewyork.us/dataset/NYC-Citywide-Rolling-Calendar-Sales/usep-8jbt)")
 
-# Apply filters only if data exists
 if not df.empty:
     # date_input returns a tuple that may have 0 or 1 elements while the user is selecting
     if len(date_range) < 2:
@@ -168,7 +158,6 @@ st.markdown("---")
 # =============================================================================
 st.markdown("### 📊 Transaction Volume Over Time")
 
-# Aggregate by month
 monthly_df = filtered_df.copy()
 monthly_df['month'] = monthly_df['date'].dt.to_period('M').dt.to_timestamp()
 monthly_agg = monthly_df.groupby('month').agg({
@@ -252,7 +241,6 @@ st.markdown("### 💰 Price Per Square Foot")
 col1, col2 = st.columns(2)
 
 with col1:
-    # Price/SF by market
     psf_by_market = filtered_df.groupby('market')['price_per_sqft'].mean().reset_index()
     psf_by_market = psf_by_market.sort_values('price_per_sqft', ascending=True)
 
@@ -268,7 +256,6 @@ with col1:
     st.plotly_chart(fig_psf, use_container_width=True)
 
 with col2:
-    # Scatter: Price vs $/SF (filter out NaN sqft for visualization)
     scatter_df = filtered_df.dropna(subset=['sqft', 'price_per_sqft'])
 
     if not scatter_df.empty:
@@ -297,7 +284,6 @@ st.markdown("---")
 # =============================================================================
 st.markdown("### 📋 Recent Transactions")
 
-# Format for display
 display_df = filtered_df.copy()
 display_df = display_df.sort_values('date', ascending=False)
 display_df['price_display'] = display_df['price'].apply(lambda x: f"${x/1e6:.1f}M")

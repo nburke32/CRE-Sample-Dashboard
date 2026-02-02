@@ -1,5 +1,5 @@
-# Run Ruff linter on every push and PR to main/uat
-name: Lint
+# CI pipeline: lint, test, and security checks on every push/PR to main/uat
+name: CI
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
     branches: [main, uat]
 
 jobs:
-  ruff:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,3 +28,46 @@ jobs:
             exit 1
           fi
           echo "No secrets committed."
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests (skip slow/API-dependent)
+        run: |
+          python -m pytest tests/ -v -m "not slow" --tb=short
+        env:
+          # Tests that need API keys will be skipped automatically
+          # via @pytest.mark.skipif decorators
+          STORAGE_BACKEND: parquet
+
+  dependency-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit dependencies for known vulnerabilities
+        run: |
+          pip install -r requirements.txt
+          pip-audit --strict --desc 2>&1 || true
+          # Note: using || true so the build doesn't fail on advisories
+          # that don't have fixes yet. Review output manually.

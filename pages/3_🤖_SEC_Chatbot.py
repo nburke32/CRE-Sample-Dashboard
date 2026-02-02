@@ -8,7 +8,6 @@ from pathlib import Path
 
 import streamlit as st
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.sec_fetcher import SECFetcher
@@ -50,11 +49,9 @@ check_password()
 # INITIALIZATION
 # =============================================================================
 
-# Paths
 DATA_DIR = Path(__file__).parent.parent / "data_store" / "sec_filings"
 LOG_DIR = Path(__file__).parent.parent / "logs"
 
-# Initialize SEC fetcher
 @st.cache_resource
 def get_sec_fetcher():
     return SECFetcher(cache_dir=DATA_DIR)
@@ -71,7 +68,6 @@ with st.sidebar:
     # API Key (Production: use Key Vault instead of Streamlit secrets)
     api_key = None
 
-    # Try to get API key from secrets (check both locations)
     if "api" in st.secrets and "ANTHROPIC_API_KEY" in st.secrets["api"]:
         api_key = st.secrets["api"]["ANTHROPIC_API_KEY"]
         st.success("✅ API Key Loaded")
@@ -94,7 +90,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # API Usage Stats (if API key available)
     if api_key:
         chatbot = SECChatbot(api_key=api_key, log_dir=LOG_DIR)
         usage = chatbot.get_usage_stats()
@@ -110,7 +105,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Example queries
     st.markdown("### 💡 Example Questions")
     st.markdown("""
     - *"What were total revenues for the year?"*
@@ -133,11 +127,9 @@ st.title("🤖 SEC Filing Chatbot")
 st.markdown("Ask questions about SEC filings using Claude AI. Powered by official SEC Edgar API.")
 st.markdown("---")
 
-# Company and filing selection
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    # Get available companies
     companies = sec_fetcher.get_available_companies()
     company_options = {c["ticker"]: c["name"] for c in companies}
 
@@ -154,7 +146,6 @@ with col2:
         help="10-K = Annual Report, 10-Q = Quarterly Report"
     )
 
-# Load filing button
 if st.button("📥 Load Filing", type="primary"):
     with st.spinner(f"Fetching latest {filing_type} for {selected_ticker}..."):
         try:
@@ -183,7 +174,6 @@ if st.button("📥 Load Filing", type="primary"):
         except Exception as e:
             st.error(f"Error loading filing: {e}")
 
-# Display current filing info
 if "current_filing" in st.session_state and st.session_state.current_filing:
     filing_info = st.session_state.current_filing
     st.info(
@@ -198,11 +188,9 @@ st.markdown("---")
 # CHAT INTERFACE
 # =============================================================================
 
-# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -213,24 +201,19 @@ for message in st.session_state.messages:
                 f"💰 {meta['total_tokens']:,} tokens | ${meta['cost']:.4f} | {meta['model'].split('-')[1].title()}"
             )
 
-# Chat input
 if prompt := st.chat_input("Ask a question about the filing..."):
-    # Check if filing is loaded
     if "current_filing" not in st.session_state or not st.session_state.current_filing:
         st.error("⚠️ Please load a filing first using the 'Load Filing' button above.")
         st.stop()
 
-    # Check if API key available
     if not api_key:
         st.error("⚠️ No API key configured. Add ANTHROPIC_API_KEY to .streamlit/secrets.toml")
         st.stop()
 
-    # Add user message to history
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Get answer from Claude
     with st.chat_message("assistant"):
         with st.spinner("Analyzing filing..."):
             try:
@@ -251,7 +234,6 @@ if prompt := st.chat_input("Ask a question about the filing..."):
                     f"{response['model'].split('-')[1].title()}"
                 )
 
-                # Save to history with metadata
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response["answer"],

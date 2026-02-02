@@ -251,3 +251,31 @@ REFRESH_INTERVAL_HOURS = 24
 
 # Historical data lookback (in years)
 HISTORICAL_YEARS = 10
+
+# =============================================================================
+# THRESHOLDS & DEFAULTS
+# =============================================================================
+
+# NYC property sales filters
+MIN_SALE_PRICE = 10_000              # Below this = likely non-arms-length
+MAX_PRICE_PSF = 5_000                # Above this $/SF = likely data error
+MIN_PRICE_PSF = 10                   # Below this $/SF = likely data error
+NYC_OPENDATA_LIMIT = 50_000          # Default row limit per Socrata query
+
+# Cache TTL
+CACHE_TTL_SECONDS = 86400            # 24 hours (used by sec_fetcher, map view, etc.)
+STREAMLIT_CACHE_TTL = 3600           # 1 hour (Streamlit @st.cache_data)
+
+# SEC Edgar
+SEC_MIN_REQUEST_INTERVAL = 0.11      # Slightly over 0.1s to stay under 10 req/sec
+SEC_MAX_FILING_CHARS = 500_000       # Truncate filing HTML text for Claude context
+
+# FRED
+FRED_FETCH_TIMEOUT = 30              # Seconds
+
+# Scoring model
+DEFAULT_MAX_SENTIMENT_ADJ = 0.20     # ±20% max sentiment adjustment on base score
+
+# Map view
+DEFAULT_PITCH = 45
+DEFAULT_BEARING = -15

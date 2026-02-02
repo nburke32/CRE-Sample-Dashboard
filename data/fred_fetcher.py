@@ -9,10 +9,9 @@ from datetime import datetime, timedelta
 import pandas as pd
 from dotenv import load_dotenv
 
-from .config import FRED_SERIES, HISTORICAL_YEARS, METROS
+from .config import FRED_FETCH_TIMEOUT, FRED_SERIES, HISTORICAL_YEARS, METROS
 from .storage import DataStorage
 
-# Load environment variables
 load_dotenv()
 
 
@@ -53,7 +52,7 @@ class FREDFetcher:
         }
 
         try:
-            response = requests.get(self.BASE_URL, params=params, timeout=30)
+            response = requests.get(self.BASE_URL, params=params, timeout=FRED_FETCH_TIMEOUT)
             response.raise_for_status()
             data = response.json()
 
@@ -75,13 +74,7 @@ class FREDFetcher:
             return None
 
     def fetch_national_data(self, force_refresh: bool = False) -> pd.DataFrame:
-        """
-        Fetch all national economic indicators.
-
-        Returns:
-            DataFrame with columns: date, indicator, value
-        """
-        # Check cache
+        """Fetch all national economic indicators."""
         if not force_refresh and self.storage.dataset_exists("fred_national"):
             last_updated = self.storage.get_last_updated("fred_national")
             if last_updated and (datetime.now() - last_updated).days < 1:
@@ -107,7 +100,6 @@ class FREDFetcher:
 
         result = pd.concat(all_data, ignore_index=True)
 
-        # Pivot to wide format for easier use
         result_wide = result.pivot_table(
             index="date", columns="indicator", values="value", aggfunc="first"
         ).reset_index()
@@ -116,13 +108,7 @@ class FREDFetcher:
         return result_wide
 
     def fetch_metro_data(self, force_refresh: bool = False) -> pd.DataFrame:
-        """
-        Fetch economic indicators for all metros.
-
-        Returns:
-            DataFrame with columns: date, metro_code, metro_name, + indicator columns
-        """
-        # Check cache
+        """Fetch economic indicators for all metros."""
         if not force_refresh and self.storage.dataset_exists("fred_metros"):
             last_updated = self.storage.get_last_updated("fred_metros")
             if last_updated and (datetime.now() - last_updated).days < 1:
@@ -134,7 +120,6 @@ class FREDFetcher:
 
         all_metro_data = []
 
-        # Indicators to fetch - these keys must exist in each METROS entry
         indicators = ["unemployment", "hpi", "population"]
 
         for metro_code, metro_info in METROS.items():
@@ -155,7 +140,6 @@ class FREDFetcher:
             if metro_data:
                 metro_df = pd.concat(metro_data, ignore_index=True)
 
-                # Pivot to wide format
                 metro_wide = metro_df.pivot_table(
                     index="date", columns="indicator", values="value", aggfunc="first"
                 ).reset_index()
@@ -170,7 +154,6 @@ class FREDFetcher:
 
         result = pd.concat(all_metro_data, ignore_index=True)
 
-        # Reorder columns
         cols = ["date", "metro_code", "metro_name"] + [
             c for c in result.columns if c not in ["date", "metro_code", "metro_name"]
         ]
@@ -180,27 +163,14 @@ class FREDFetcher:
         return result
 
     def fetch_all(self, force_refresh: bool = False) -> dict[str, pd.DataFrame]:
-        """
-        Fetch all FRED data (national + metros).
-
-        Returns:
-            Dict with 'national' and 'metros' DataFrames
-        """
+        """Fetch all FRED data (national + metros)."""
         return {
             "national": self.fetch_national_data(force_refresh),
             "metros": self.fetch_metro_data(force_refresh),
         }
 
     def get_metro_data(self, metro_code: str) -> pd.DataFrame | None:
-        """
-        Get data for a single metro from cache.
-
-        Args:
-            metro_code: Metro code (e.g., "NYC", "LAX")
-
-        Returns:
-            DataFrame for that metro or None
-        """
+        """Get data for a single metro from cache."""
         df = self.storage.load_dataframe("fred_metros", filters={"metro_code": metro_code})
         return df
 

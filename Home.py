@@ -4,10 +4,11 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+from data.config import STREAMLIT_CACHE_TTL
 from data.storage import DataStorage
+from helpers import get_latest_valid
 
 st.set_page_config(
     page_title="Commercial Real Estate Dashboard",
@@ -15,7 +16,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# Hide default Streamlit navigation
 st.html("""
     <style>
         [data-testid="stSidebarNav"] {
@@ -24,7 +24,6 @@ st.html("""
     </style>
 """)
 
-# Sidebar
 with st.sidebar:
     st.image("assets/logo.jpg", width=280)
     st.markdown("---")
@@ -37,13 +36,11 @@ with st.sidebar:
     st.markdown("---")
     st.caption("v0.1.0")
 
-# Main content
 st.title("🏢 Commercial Real Estate Dashboard")
 st.markdown("Welcome back! Here's your overview.")
 
 st.markdown("---")
 
-# Navigation cards
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -76,11 +73,9 @@ with col4:
 
 st.markdown("---")
 
-# Real economic metrics
 st.subheader("📊 Key Economic Indicators")
 
-# Load national economic data
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=STREAMLIT_CACHE_TTL)
 def load_national_data():
     """Load national economic data from storage."""
     try:
@@ -93,21 +88,8 @@ def load_national_data():
 national_df = load_national_data()
 
 if not national_df.empty:
-    # Helper function to get latest valid value for a column
-    def get_latest_valid(df, column):
-        """Get the most recent non-null value for a column."""
-        valid_data = df[df[column].notna()].sort_values("date")
-        if not valid_data.empty:
-            latest_row = valid_data.iloc[-1]
-            # Get previous value for delta (1 month before)
-            prev_data = valid_data[valid_data["date"] <= (latest_row["date"] - pd.Timedelta(days=25))]
-            prev_row = prev_data.iloc[-1] if not prev_data.empty else None
-            return latest_row, prev_row
-        return None, None
-
     m1, m2, m3, m4 = st.columns(4)
 
-    # Track dates for caption
     metric_dates = []
 
     with m1:
@@ -170,7 +152,6 @@ if not national_df.empty:
         else:
             st.metric("CRE Delinquency", "N/A")
 
-    # Show date range in caption
     if metric_dates:
         min_date = min(metric_dates)
         max_date = max(metric_dates)
@@ -179,7 +160,6 @@ if not national_df.empty:
         else:
             st.caption(f"📅 Data from {min_date.strftime('%b %Y')} to {max_date.strftime('%b %Y')} (metrics update on different schedules)")
 else:
-    # Fallback if no data available
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("10Y Treasury", "N/A")
     m2.metric("30Y Mortgage", "N/A")

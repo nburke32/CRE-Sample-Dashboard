@@ -21,15 +21,9 @@ class YFinanceFetcher:
         self.storage = DataStorage()
 
     def fetch_reit_prices(self, force_refresh: bool = False) -> pd.DataFrame:
-        """
-        Fetch historical prices for all REIT tickers.
-
-        Returns:
-            DataFrame with columns: date, ticker, name, sector, close, volume, pct_change
-        """
+        """Fetch historical prices for all REIT tickers."""
         import yfinance as yf
 
-        # Check cache
         if not force_refresh and self.storage.dataset_exists("reit_prices"):
             last_updated = self.storage.get_last_updated("reit_prices")
             if last_updated and (datetime.now() - last_updated).total_seconds() < 4 * 3600:
@@ -40,7 +34,6 @@ class YFinanceFetcher:
 
         print(f"Fetching REIT data for {len(tickers)} tickers...")
 
-        # Download all at once for efficiency
         data = yf.download(
             tickers,
             start=start_date,
@@ -79,25 +72,18 @@ class YFinanceFetcher:
 
         result = pd.concat(all_data, ignore_index=True)
 
-        # Reorder columns
         result = result[["date", "ticker", "name", "sector", "close", "volume", "pct_change"]]
 
         self.storage.save_dataframe(result, "reit_prices")
         return result
 
     def fetch_sector_indices(self, force_refresh: bool = False) -> pd.DataFrame:
-        """
-        Calculate sector-level indices from individual REIT prices.
-
-        Returns:
-            DataFrame with columns: date, sector, avg_price, total_volume, avg_pct_change
-        """
+        """Calculate sector-level indices from individual REIT prices."""
         prices = self.fetch_reit_prices(force_refresh)
 
         if prices.empty:
             return pd.DataFrame()
 
-        # Group by date and sector
         sector_data = (
             prices.groupby(["date", "sector"])
             .agg(
@@ -123,12 +109,7 @@ class YFinanceFetcher:
         return sector_data
 
     def get_current_sentiment(self) -> pd.DataFrame:
-        """
-        Get current market sentiment summary.
-
-        Returns:
-            DataFrame with current sector performance metrics
-        """
+        """Get current market sentiment summary."""
         prices = self.storage.load_dataframe("reit_prices")
 
         if prices is None or prices.empty:
@@ -182,25 +163,9 @@ class YFinanceFetcher:
         return pd.DataFrame(results)
 
     def get_ticker_data(self, ticker: str) -> pd.DataFrame | None:
-        """
-        Get data for a single ticker from cache.
-
-        Args:
-            ticker: Stock ticker (e.g., "VNQ", "PLD")
-
-        Returns:
-            DataFrame for that ticker or None
-        """
+        """Get data for a single ticker from cache."""
         return self.storage.load_dataframe("reit_prices", filters={"ticker": ticker})
 
     def get_sector_data(self, sector: str) -> pd.DataFrame | None:
-        """
-        Get data for a single sector from cache.
-
-        Args:
-            sector: Sector name (e.g., "office", "industrial")
-
-        Returns:
-            DataFrame for that sector or None
-        """
+        """Get data for a single sector from cache."""
         return self.storage.load_dataframe("reit_prices", filters={"sector": sector})

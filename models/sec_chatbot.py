@@ -16,25 +16,18 @@ class SECChatbot:
     """Chatbot for analyzing SEC filings using Claude."""
 
     # Model pricing (per million tokens)
-    PRICING = {
+    MODEL_PRICING = {
         "claude-opus-4-5": {"input": 15.00, "output": 75.00},
         "claude-sonnet-4-5": {"input": 3.00, "output": 15.00},
         "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
     }
 
     def __init__(self, api_key: str, log_dir: Path):
-        """
-        Initialize chatbot.
-
-        Args:
-            api_key: Anthropic API key
-            log_dir: Directory for usage logs
-        """
+        """Initialize chatbot with API key and log directory."""
         self.client = anthropic.Anthropic(api_key=api_key)
         self.log_dir = log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Setup logging
         self._setup_logging()
 
     def _setup_logging(self):
@@ -44,7 +37,6 @@ class SECChatbot:
         self.logger = logging.getLogger("sec_chatbot")
         self.logger.setLevel(logging.INFO)
 
-        # File handler
         if not self.logger.handlers:
             handler = logging.FileHandler(log_file)
             formatter = logging.Formatter(
@@ -64,7 +56,7 @@ class SECChatbot:
 
     def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
         """Calculate API call cost."""
-        pricing = self.PRICING.get(model, {"input": 0, "output": 0})
+        pricing = self.MODEL_PRICING.get(model, {"input": 0, "output": 0})
         input_cost = (input_tokens / 1_000_000) * pricing["input"]
         output_cost = (output_tokens / 1_000_000) * pricing["output"]
         return input_cost + output_cost
@@ -76,19 +68,7 @@ class SECChatbot:
         model: str = "claude-sonnet-4-5",
         company_name: str = "the company"
     ) -> dict:
-        """
-        Ask a question about a SEC filing.
-
-        Args:
-            filing_text: Full text of the filing
-            question: User's question
-            model: Claude model to use
-            company_name: Company name for context
-
-        Returns:
-            Dict with answer, tokens used, and cost
-        """
-        # Construct prompt
+        """Ask a question about a SEC filing. Returns dict with answer, tokens, and cost."""
         system_prompt = f"""You are a financial analyst assistant helping analyze SEC filings for {company_name}.
 
 Your role:
@@ -112,7 +92,6 @@ Question: {question}
 Please provide a clear, accurate answer based on the filing content."""
 
         try:
-            # Call Claude API
             start = time.time()
             response = self.client.messages.create(
                 model=model,
@@ -124,15 +103,11 @@ Please provide a clear, accurate answer based on the filing content."""
             )
             response_time = time.time() - start
 
-            # Extract and clean response
             answer = self.clean_response_text(response.content[0].text)
             input_tokens = response.usage.input_tokens
             output_tokens = response.usage.output_tokens
 
-            # Calculate cost
             cost = self._calculate_cost(model, input_tokens, output_tokens)
-
-            # Log usage
             self._log_usage(model, input_tokens, output_tokens, cost, response_time)
 
             return {
@@ -151,12 +126,7 @@ Please provide a clear, accurate answer based on the filing content."""
             raise Exception(f"Claude API error: {e}")
 
     def get_usage_stats(self) -> dict:
-        """
-        Get API usage statistics from logs.
-
-        Returns:
-            Dict with total calls, tokens, and cost
-        """
+        """Get API usage statistics from logs."""
         log_file = self.log_dir / "api_usage.log"
 
         if not log_file.exists():
@@ -184,7 +154,6 @@ Please provide a clear, accurate answer based on the filing content."""
                     cost = float(cost_str)
                     total_cost += cost
 
-                    # Check if today
                     date_str = line.split(" - ")[0]
                     log_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S").date()
                     if log_date == today:
@@ -218,20 +187,25 @@ Please provide a clear, accurate answer based on the filing content."""
     @staticmethod
     def get_available_models() -> list[dict[str, str]]:
         """Get list of available Claude models."""
-        return [
-            {
-                "id": "claude-haiku-4-5",
-                "name": "Claude Haiku 4.5 (Fastest)",
-                "description": "Best for simple questions - $1/$5 per MTok"
-            },
-            {
-                "id": "claude-sonnet-4-5",
-                "name": "Claude Sonnet 4.5 (Recommended)",
-                "description": "Best balance - $3/$15 per MTok"
-            },
-            {
-                "id": "claude-opus-4-5",
-                "name": "Claude Opus 4.5 (Most Capable)",
-                "description": "Most thorough - $15/$75 per MTok"
-            }
-        ]
+        return get_available_models()
+
+
+def get_available_models() -> list[dict[str, str]]:
+    """Available Claude models for the SEC chatbot."""
+    return [
+        {
+            "id": "claude-haiku-4-5",
+            "name": "Claude Haiku 4.5 (Fastest)",
+            "description": "Best for simple questions - $1/$5 per MTok",
+        },
+        {
+            "id": "claude-sonnet-4-5",
+            "name": "Claude Sonnet 4.5 (Recommended)",
+            "description": "Best balance - $3/$15 per MTok",
+        },
+        {
+            "id": "claude-opus-4-5",
+            "name": "Claude Opus 4.5 (Most Capable)",
+            "description": "Most thorough - $15/$75 per MTok",
+        },
+    ]

@@ -10,12 +10,11 @@ import pandas as pd
 from dotenv import load_dotenv
 from sodapy import Socrata
 
+from .config import MAX_PRICE_PSF, MIN_PRICE_PSF, MIN_SALE_PRICE, NYC_OPENDATA_LIMIT
 from .storage import DataStorage
 
-# Load environment variables
 load_dotenv()
 
-# NYC OpenData configuration
 NYC_OPENDATA_DOMAIN = "data.cityofnewyork.us"
 PROPERTY_SALES_DATASET_ID = "usep-8jbt"  # NYC Citywide Rolling Calendar Sales
 
@@ -56,24 +55,11 @@ class NYCOpenDataFetcher:
         self,
         start_date: str | None = None,
         end_date: str | None = None,
-        limit: int = 50000,
+        limit: int = NYC_OPENDATA_LIMIT,
         commercial_only: bool = True,
         force_refresh: bool = False
     ) -> pd.DataFrame:
-        """
-        Fetch NYC property sales data.
-
-        Args:
-            start_date: Start date in YYYY-MM-DD format (default: 18 months ago)
-            end_date: End date in YYYY-MM-DD format (default: today)
-            limit: Maximum records to fetch (default: 50000)
-            commercial_only: Filter for commercial properties only (tax_class = 4)
-            force_refresh: Force refresh from API even if cached
-
-        Returns:
-            DataFrame with property sales data
-        """
-        # Check cache first
+        """Fetch NYC property sales data."""
         if not force_refresh and self.storage.dataset_exists("nyc_property_sales"):
             print("Loading NYC property sales from cache...")
             cached_df = self.storage.load_dataframe("nyc_property_sales")
@@ -88,7 +74,6 @@ class NYCOpenDataFetcher:
         if not start_date:
             start_date = (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
 
-        # Build SoQL query
         where_clauses = [
             f"sale_date >= '{start_date}'",
             f"sale_date <= '{end_date}'",
@@ -102,7 +87,6 @@ class NYCOpenDataFetcher:
         where_query = " AND ".join(where_clauses)
 
         try:
-            # Fetch data using Socrata client
             results = self.client.get(
                 PROPERTY_SALES_DATASET_ID,
                 where=where_query,
@@ -114,13 +98,8 @@ class NYCOpenDataFetcher:
                 print("⚠️ No results returned from API")
                 return pd.DataFrame()
 
-            # Convert to DataFrame
             df = pd.DataFrame.from_records(results)
-
-            # Data cleaning and type conversions
             df = self._clean_property_data(df)
-
-            # Save to cache
             self.storage.save_dataframe(df, "nyc_property_sales")
             print(f"✅ Fetched {len(df)} property sales records")
 
@@ -135,11 +114,9 @@ class NYCOpenDataFetcher:
         if df.empty:
             return df
 
-        # Convert date columns
         if "sale_date" in df.columns:
             df["sale_date"] = pd.to_datetime(df["sale_date"])
 
-        # Convert numeric columns
         numeric_cols = {
             "sale_price": float,
             "gross_square_feet": float,
@@ -154,14 +131,12 @@ class NYCOpenDataFetcher:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        # Calculate price per square foot
         if "sale_price" in df.columns and "gross_square_feet" in df.columns:
             df["price_per_sqft"] = df["sale_price"] / df["gross_square_feet"]
             # Remove outliers (likely data errors)
-            df.loc[df["price_per_sqft"] > 5000, "price_per_sqft"] = None
-            df.loc[df["price_per_sqft"] < 10, "price_per_sqft"] = None
+            df.loc[df["price_per_sqft"] > MAX_PRICE_PSF, "price_per_sqft"] = None
+            df.loc[df["price_per_sqft"] < MIN_PRICE_PSF, "price_per_sqft"] = None
 
-        # Standardize borough names
         if "borough" in df.columns:
             borough_map = {
                 "1": "Manhattan",
@@ -172,7 +147,6 @@ class NYCOpenDataFetcher:
             }
             df["borough"] = df["borough"].map(borough_map).fillna(df["borough"])
 
-        # Map building class to readable categories
         if "building_class_category" in df.columns:
             df["property_type"] = df["building_class_category"].apply(
                 self._categorize_property_type
@@ -181,9 +155,8 @@ class NYCOpenDataFetcher:
         # Remove clearly invalid sales (likely data errors)
         if "sale_price" in df.columns:
             # Filter out suspiciously low sales (< $10k likely errors/non-arms-length)
-            df = df[df["sale_price"] >= 10000].copy()
+            df = df[df["sale_price"] >= MIN_SALE_PRICE].copy()
 
-        # Drop rows with missing critical data
         df = df.dropna(subset=["sale_price", "sale_date"])
 
         return df
@@ -215,20 +188,7 @@ class NYCOpenDataFetcher:
         limit: int = 10000,
         force_refresh: bool = False
     ) -> pd.DataFrame:
-        """
-        Fetch building characteristics data (for enrichment).
-
-        Dataset: Property Data (Buildings Information System)
-        Note: This is a large dataset, so we limit records by default.
-
-        Args:
-            limit: Maximum records to fetch
-            force_refresh: Force refresh from API
-
-        Returns:
-            DataFrame with building characteristics
-        """
-        # Check cache first
+        """Fetch building characteristics data. Large dataset, limited by default."""
         if not force_refresh and self.storage.dataset_exists("nyc_building_data"):
             print("Loading NYC building data from cache...")
             cached_df = self.storage.load_dataframe("nyc_building_data")
@@ -241,7 +201,6 @@ class NYCOpenDataFetcher:
         bis_dataset_id = "e98g-f8hy"
 
         try:
-            # Fetch recent building data
             results = self.client.get(
                 bis_dataset_id,
                 limit=limit,
@@ -254,7 +213,6 @@ class NYCOpenDataFetcher:
 
             df = pd.DataFrame.from_records(results)
 
-            # Save to cache
             self.storage.save_dataframe(df, "nyc_building_data")
             print(f"✅ Fetched {len(df)} building records")
 
@@ -274,7 +232,6 @@ class NYCOpenDataFetcher:
             self.client.close()
 
 
-# Convenience functions for easy imports
 def fetch_nyc_property_sales(force_refresh: bool = False) -> pd.DataFrame:
     """Convenience function to fetch NYC property sales."""
     fetcher = NYCOpenDataFetcher()
