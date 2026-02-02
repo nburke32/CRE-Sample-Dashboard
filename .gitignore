@@ -22,8 +22,10 @@ Thumbs.db
 *.sqlite
 *.csv
 
-# Parquet data store
-data_store/
+# Parquet data store (cached data, regenerated on refresh)
+data_store/*
+# But track seed data (committed baseline so fresh clones work without API calls)
+!data_store/seed/
 
 # API usage logs
 logs/

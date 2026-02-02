@@ -16,6 +16,19 @@ STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "parquet")
 # Local parquet storage path
 DATA_STORE_PATH = Path(__file__).parent.parent / "data_store"
 
+# Seed data: committed to git as a fallback when data_store/ is empty
+SEED_DATA_PATH = Path(__file__).parent.parent / "data_store" / "seed"
+
+# =============================================================================
+# OVERTURE MAPS / GEOSPATIAL CONFIGURATION
+# =============================================================================
+
+# NYC bounding box covering all 5 boroughs (west, south, east, north)
+NYC_BBOX = (-74.25, 40.49, -73.69, 40.92)
+
+# NYC GeoSearch API (free, no key required)
+NYC_GEOSEARCH_URL = "https://geosearch.planninglabs.nyc/v2/search"
+
 # =============================================================================
 # TOP 20 CRE METROS
 # =============================================================================

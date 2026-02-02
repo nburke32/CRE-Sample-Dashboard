@@ -15,13 +15,13 @@ st.set_page_config(
 )
 
 # Hide default Streamlit navigation
-st.markdown("""
+st.html("""
     <style>
         [data-testid="stSidebarNav"] {
             display: none;
         }
     </style>
-""", unsafe_allow_html=True)
+""")
 
 # Sidebar
 with st.sidebar:

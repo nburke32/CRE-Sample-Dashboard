@@ -16,6 +16,36 @@ from models.sec_chatbot import SECChatbot
 st.set_page_config(page_title="SEC Chatbot", page_icon="🤖", layout="wide")
 
 # =============================================================================
+# PASSWORD GATE
+# =============================================================================
+
+def check_password():
+    """Gate access to this page with a password stored in secrets."""
+    if st.session_state.get("sec_chatbot_authenticated"):
+        return True
+
+    # Check top-level and [api] section (TOML sections absorb keys below them)
+    password = st.secrets.get("SEC_CHATBOT_PASSWORD", "")
+    if not password and "api" in st.secrets:
+        password = st.secrets["api"].get("SEC_CHATBOT_PASSWORD", "")
+    if not password:
+        # No password configured — allow access (local dev)
+        return True
+
+    st.title("🔒 SEC Filing Chatbot")
+    st.markdown("This page requires a password to access.")
+    entered = st.text_input("Password", type="password", key="sec_pw_input")
+    if st.button("Submit", type="primary"):
+        if entered == password:
+            st.session_state["sec_chatbot_authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+    st.stop()
+
+check_password()
+
+# =============================================================================
 # INITIALIZATION
 # =============================================================================
 

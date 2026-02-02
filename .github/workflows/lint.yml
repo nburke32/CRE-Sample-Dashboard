@@ -1,0 +1,30 @@
+# Run Ruff linter on every push and PR to main/uat
+name: Lint
+
+on:
+  push:
+    branches: [main, uat]
+  pull_request:
+    branches: [main, uat]
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Ruff linter
+        uses: astral-sh/ruff-action@v3
+
+      - name: Check secrets not committed
+        run: |
+          # Fail if .env or secrets.toml are tracked
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "ERROR: .env is tracked in git!"
+            exit 1
+          fi
+          if git ls-files --error-unmatch .streamlit/secrets.toml 2>/dev/null; then
+            echo "ERROR: secrets.toml is tracked in git!"
+            exit 1
+          fi
+          echo "No secrets committed."

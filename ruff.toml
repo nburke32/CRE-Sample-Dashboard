@@ -1,0 +1,21 @@
+# Ruff linter config — https://docs.astral.sh/ruff/
+target-version = "py311"
+line-length = 120
+
+[lint]
+# Rules enabled:
+#   F  = Pyflakes (unused imports, undefined names, etc.)
+#   E  = pycodestyle errors (syntax issues, whitespace problems)
+#   W  = pycodestyle warnings
+#   I  = isort (import sorting)
+#   UP = pyupgrade (modernize syntax for target Python version)
+select = ["F", "E", "W", "I", "UP"]
+
+# Rules to ignore:
+#   E501 = line too long (we set line-length above, but some long strings are fine)
+#   E402 = module-level import not at top (Streamlit pages do sys.path manipulation first)
+#   F841 = local variable assigned but never used (Streamlit column unpacking: c1, c2 = st.columns(2))
+ignore = ["E501", "E402", "F841"]
+
+[lint.isort]
+known-first-party = ["data", "models"]

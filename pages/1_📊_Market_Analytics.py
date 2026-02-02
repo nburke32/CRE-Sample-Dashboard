@@ -122,11 +122,17 @@ if not df.empty:
         st.markdown("### 📊 Data Source")
         st.caption("**NYC OpenData**")
         st.caption(f"{len(df):,} transactions")
-        st.caption("Last 24 months")
+        months_span = max(1, (df['date'].max() - df['date'].min()).days // 30)
+        st.caption(f"Last {months_span} months")
         st.caption("[View Dataset →](https://data.cityofnewyork.us/dataset/NYC-Citywide-Rolling-Calendar-Sales/usep-8jbt)")
 
 # Apply filters only if data exists
 if not df.empty:
+    # date_input returns a tuple that may have 0 or 1 elements while the user is selecting
+    if len(date_range) < 2:
+        st.warning("Please select both a start and end date.")
+        st.stop()
+
     filtered_df = df[
         (df['date'].dt.date >= date_range[0]) &
         (df['date'].dt.date <= date_range[1]) &
