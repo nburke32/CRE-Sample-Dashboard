@@ -4,11 +4,11 @@ Uses Socrata Open Data API (SODA) to access NYC property transaction records.
 """
 
 import os
-import pandas as pd
 from datetime import datetime, timedelta
-from typing import Optional
-from sodapy import Socrata
+
+import pandas as pd
 from dotenv import load_dotenv
+from sodapy import Socrata
 
 from .storage import DataStorage
 
@@ -54,8 +54,8 @@ class NYCOpenDataFetcher:
 
     def fetch_property_sales(
         self,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         limit: int = 50000,
         commercial_only: bool = True,
         force_refresh: bool = False
@@ -264,7 +264,7 @@ class NYCOpenDataFetcher:
             print(f"❌ Error fetching building data: {e}")
             return pd.DataFrame()
 
-    def get_last_updated(self, dataset_name: str) -> Optional[datetime]:
+    def get_last_updated(self, dataset_name: str) -> datetime | None:
         """Get last update timestamp for a cached dataset."""
         return self.storage.get_last_updated(dataset_name)
 

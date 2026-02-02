@@ -3,11 +3,11 @@ YFinance data fetcher for REIT and homebuilder sentiment.
 Provides real-time market sentiment indicators for CRE sectors.
 """
 
-import pandas as pd
 from datetime import datetime, timedelta
-from typing import Optional
 
-from .config import REIT_TICKERS, HISTORICAL_YEARS
+import pandas as pd
+
+from .config import HISTORICAL_YEARS, REIT_TICKERS
 from .storage import DataStorage
 
 
@@ -181,7 +181,7 @@ class YFinanceFetcher:
 
         return pd.DataFrame(results)
 
-    def get_ticker_data(self, ticker: str) -> Optional[pd.DataFrame]:
+    def get_ticker_data(self, ticker: str) -> pd.DataFrame | None:
         """
         Get data for a single ticker from cache.
 
@@ -193,7 +193,7 @@ class YFinanceFetcher:
         """
         return self.storage.load_dataframe("reit_prices", filters={"ticker": ticker})
 
-    def get_sector_data(self, sector: str) -> Optional[pd.DataFrame]:
+    def get_sector_data(self, sector: str) -> pd.DataFrame | None:
         """
         Get data for a single sector from cache.
 

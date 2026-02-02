@@ -3,13 +3,11 @@ SEC Edgar Filing Fetcher
 Retrieves SEC filings (10-K, 10-Q) for curated companies using the official SEC Edgar API.
 """
 
-import requests
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional
 import json
-import re
+import time
+from pathlib import Path
+
+import requests
 from bs4 import BeautifulSoup
 
 
@@ -55,12 +53,12 @@ class SECFetcher:
             time.sleep(self.min_request_interval - elapsed)
         self.last_request_time = time.time()
 
-    def _get_cik(self, ticker: str) -> Optional[str]:
+    def _get_cik(self, ticker: str) -> str | None:
         """Get CIK for a ticker from curated list."""
         company = self.COMPANIES.get(ticker.upper())
         return company["cik"] if company else None
 
-    def get_company_submissions(self, ticker: str) -> Dict:
+    def get_company_submissions(self, ticker: str) -> dict:
         """
         Get all submissions for a company.
 
@@ -80,7 +78,7 @@ class SECFetcher:
             # Use cache if less than 1 day old
             cache_age = time.time() - cache_file.stat().st_mtime
             if cache_age < 86400:  # 24 hours
-                with open(cache_file, 'r') as f:
+                with open(cache_file) as f:
                     return json.load(f)
 
         # Fetch from SEC
@@ -101,7 +99,7 @@ class SECFetcher:
         except requests.RequestException as e:
             raise Exception(f"Failed to fetch submissions for {ticker}: {e}")
 
-    def get_latest_filing(self, ticker: str, form_type: str = "10-K") -> Optional[Dict]:
+    def get_latest_filing(self, ticker: str, form_type: str = "10-K") -> dict | None:
         """
         Get the latest filing of a specific type.
 
@@ -134,7 +132,7 @@ class SECFetcher:
 
         return None
 
-    def download_filing(self, filing: Dict) -> str:
+    def download_filing(self, filing: dict) -> str:
         """
         Download the full text of a filing.
 
@@ -203,7 +201,7 @@ class SECFetcher:
 
         return text
 
-    def get_filing_text(self, ticker: str, form_type: str = "10-K") -> Optional[str]:
+    def get_filing_text(self, ticker: str, form_type: str = "10-K") -> str | None:
         """
         Convenience method: Get clean text of latest filing.
 
@@ -223,7 +221,7 @@ class SECFetcher:
 
         return text
 
-    def get_available_companies(self) -> List[Dict[str, str]]:
+    def get_available_companies(self) -> list[dict[str, str]]:
         """Get list of available companies."""
         return [
             {"ticker": ticker, "name": info["name"]}

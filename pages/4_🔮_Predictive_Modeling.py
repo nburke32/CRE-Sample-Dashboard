@@ -1,18 +1,19 @@
-import streamlit as st
-import pandas as pd
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import sys
-from pathlib import Path
+import streamlit as st
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.config import METROS, REIT_TICKERS
-from data.storage import DataStorage
 from data.fred_fetcher import FREDFetcher
+from data.storage import DataStorage
 from data.yfinance_fetcher import YFinanceFetcher
 
 st.set_page_config(page_title="Predictive Modeling", page_icon="🔮", layout="wide")
@@ -358,7 +359,7 @@ if analysis_type == "Metro Forecast":
             example_price_today = example_price_1995 * multiplier
 
             with st.expander("📊 Understanding the House Price Index (HPI)", expanded=False):
-                st.markdown(f"""
+                st.markdown(rf"""
                 **What is HPI?**
 
                 The House Price Index is a **relative index**, not a dollar amount. It measures price changes over time compared to a baseline.
@@ -960,7 +961,7 @@ elif analysis_type == "Market Rankings":
                         normalized = np.clip(avg_return / 10.0, -1.0, 1.0)
                         st.caption(f"**Step 2 - Normalize to [-1, +1]:** {normalized:+.3f}")
                         st.caption(f"  → Divide by 10% (typical monthly REIT range): {avg_return:+.2f}% ÷ 10% = {normalized:+.3f}")
-                        st.caption(f"  → Clipped to [-1, +1] range")
+                        st.caption("  → Clipped to [-1, +1] range")
 
                         # Step 3: Apply max adjustment
                         final_sentiment_pct = normalized * max_sentiment_pct

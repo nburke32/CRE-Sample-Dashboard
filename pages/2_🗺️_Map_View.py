@@ -4,11 +4,11 @@
   Tab 2: Overture + Transactions (building footprints matched to transactions)
 """
 
-import streamlit as st
-import pandas as pd
+
 import geopandas as gpd
+import pandas as pd
 import pydeck as pdk
-import json
+import streamlit as st
 
 st.set_page_config(page_title="Map View", page_icon="🗺️", layout="wide")
 

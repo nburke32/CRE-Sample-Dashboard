@@ -1,7 +1,8 @@
-import streamlit as st
-import pandas as pd
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))

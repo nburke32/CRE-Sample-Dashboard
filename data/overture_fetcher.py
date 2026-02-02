@@ -8,15 +8,13 @@ Supports two modes:
   - Transaction-proximity (35K buildings within 50m of a known transaction)
 """
 
-import pandas as pd
-import geopandas as gpd
-from typing import Optional, Tuple
 from datetime import datetime
-from pathlib import Path
+
+import geopandas as gpd
+import pandas as pd
 from shapely.geometry import Point
 
-from .config import DATA_STORE_PATH, SEED_DATA_PATH, NYC_BBOX
-
+from .config import DATA_STORE_PATH, NYC_BBOX, SEED_DATA_PATH
 
 COMMERCIAL_SUBTYPES = {"commercial", "industrial", "service"}
 
@@ -68,7 +66,7 @@ class OvertureFetcher:
 
     def fetch_commercial(
         self,
-        bbox: Tuple[float, float, float, float] = NYC_BBOX,
+        bbox: tuple[float, float, float, float] = NYC_BBOX,
         force_refresh: bool = False,
     ) -> gpd.GeoDataFrame:
         """
@@ -93,7 +91,7 @@ class OvertureFetcher:
     def fetch_matched(
         self,
         transactions_df: pd.DataFrame,
-        bbox: Tuple[float, float, float, float] = NYC_BBOX,
+        bbox: tuple[float, float, float, float] = NYC_BBOX,
         buffer_m: float = 50.0,
         force_refresh: bool = False,
     ) -> gpd.GeoDataFrame:
@@ -151,7 +149,7 @@ class OvertureFetcher:
         print(f"Cached to {self.matched_path}")
         return nearby
 
-    def get_commercial(self) -> Optional[gpd.GeoDataFrame]:
+    def get_commercial(self) -> gpd.GeoDataFrame | None:
         """Load cached commercial buildings, falling back to seed data."""
         if self.commercial_path.exists():
             return gpd.read_parquet(self.commercial_path)
@@ -160,7 +158,7 @@ class OvertureFetcher:
             return gpd.read_parquet(seed)
         return None
 
-    def get_matched(self) -> Optional[gpd.GeoDataFrame]:
+    def get_matched(self) -> gpd.GeoDataFrame | None:
         """Load cached transaction-proximity buildings, falling back to seed data."""
         if self.matched_path.exists():
             return gpd.read_parquet(self.matched_path)
@@ -169,7 +167,7 @@ class OvertureFetcher:
             return gpd.read_parquet(seed)
         return None
 
-    def get_last_updated(self, which="commercial") -> Optional[datetime]:
+    def get_last_updated(self, which="commercial") -> datetime | None:
         """Get cache timestamp."""
         path = self.commercial_path if which == "commercial" else self.matched_path
         if path.exists():

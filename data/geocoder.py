@@ -5,12 +5,11 @@ Free API, no key required.
 """
 
 import time
+
 import pandas as pd
 import requests
-from typing import Optional, Tuple
-from pathlib import Path
 
-from .config import NYC_GEOSEARCH_URL, DATA_STORE_PATH, SEED_DATA_PATH
+from .config import DATA_STORE_PATH, NYC_GEOSEARCH_URL, SEED_DATA_PATH
 
 
 class NYCGeocoder:
@@ -30,7 +29,7 @@ class NYCGeocoder:
 
     def geocode_address(
         self, address: str, borough: str = "", zip_code: str = ""
-    ) -> Optional[Tuple[float, float]]:
+    ) -> tuple[float, float] | None:
         """
         Geocode a single NYC address.
 
@@ -132,7 +131,7 @@ class NYCGeocoder:
         print(f"Geocoded {geocoded}/{total} addresses ({failed} failed)")
         return result
 
-    def get_geocoded_transactions(self) -> Optional[pd.DataFrame]:
+    def get_geocoded_transactions(self) -> pd.DataFrame | None:
         """Load cached geocoded transactions, falling back to seed data."""
         if self.cache_path.exists():
             return pd.read_parquet(self.cache_path)

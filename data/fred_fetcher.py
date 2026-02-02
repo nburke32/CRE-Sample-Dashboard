@@ -3,14 +3,13 @@ FRED API data fetcher for economic indicators.
 Fetches national and metro-level data relevant to CRE analysis.
 """
 
-import pandas as pd
-from datetime import datetime, timedelta
-from typing import Optional
 import os
+from datetime import datetime, timedelta
 
+import pandas as pd
 from dotenv import load_dotenv
 
-from .config import METROS, FRED_SERIES, HISTORICAL_YEARS
+from .config import FRED_SERIES, HISTORICAL_YEARS, METROS
 from .storage import DataStorage
 
 # Load environment variables
@@ -25,7 +24,7 @@ class FREDFetcher:
 
     BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.getenv("FRED_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -33,7 +32,7 @@ class FREDFetcher:
             )
         self.storage = DataStorage()
 
-    def _fetch_series(self, series_id: str, start_date: str) -> Optional[pd.DataFrame]:
+    def _fetch_series(self, series_id: str, start_date: str) -> pd.DataFrame | None:
         """
         Fetch a single FRED series.
 
@@ -192,7 +191,7 @@ class FREDFetcher:
             "metros": self.fetch_metro_data(force_refresh),
         }
 
-    def get_metro_data(self, metro_code: str) -> Optional[pd.DataFrame]:
+    def get_metro_data(self, metro_code: str) -> pd.DataFrame | None:
         """
         Get data for a single metro from cache.
 
@@ -205,6 +204,6 @@ class FREDFetcher:
         df = self.storage.load_dataframe("fred_metros", filters={"metro_code": metro_code})
         return df
 
-    def get_national_data(self) -> Optional[pd.DataFrame]:
+    def get_national_data(self) -> pd.DataFrame | None:
         """Get national data from cache."""
         return self.storage.load_dataframe("fred_national")

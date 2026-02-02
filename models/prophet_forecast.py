@@ -3,10 +3,9 @@ Prophet time-series forecasting for metro-level CRE indicators.
 Provides forecasts with confidence intervals for housing/economic metrics.
 """
 
-import pandas as pd
+
 import numpy as np
-from typing import Optional, Tuple
-from datetime import datetime
+import pandas as pd
 
 
 class ProphetForecaster:
@@ -178,7 +177,7 @@ class ProphetForecaster:
 
         return forecast_df
 
-    def get_components(self) -> Optional[pd.DataFrame]:
+    def get_components(self) -> pd.DataFrame | None:
         """Get trend and seasonality components."""
         if not self.fitted:
             return None
@@ -272,7 +271,7 @@ def forecast_metro_indicator(
     indicator_col: str,
     periods: int = 12,
     date_col: str = "date",
-) -> Tuple[pd.DataFrame, dict]:
+) -> tuple[pd.DataFrame, dict]:
     """
     Convenience function to forecast a metro indicator with validation.
 

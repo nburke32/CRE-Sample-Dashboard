@@ -12,10 +12,10 @@ Implementation:
 - Final Score = Base Score × (1 + Sentiment Adjustment)
 """
 
-import pandas as pd
+from datetime import timedelta
+
 import numpy as np
-from typing import Optional, Tuple, List, Dict
-from datetime import datetime, timedelta
+import pandas as pd
 
 # Regional groupings for percentile ranking
 REGIONS = {
@@ -61,7 +61,7 @@ class MarketStrengthModel:
         self,
         metro_df: pd.DataFrame,
         national_df: pd.DataFrame,
-        reit_df: Optional[pd.DataFrame] = None,
+        reit_df: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """
         Prepare feature matrix from metro, national, and REIT data.
@@ -192,9 +192,9 @@ class MarketStrengthModel:
 
     def calculate_reit_sentiment(
         self,
-        reit_df: Optional[pd.DataFrame] = None,
+        reit_df: pd.DataFrame | None = None,
         lookback_days: int = 30,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Calculate forward-looking sentiment from REIT momentum.
 
@@ -370,7 +370,7 @@ class MarketStrengthModel:
     def calculate_strength_score(
         self,
         features_df: pd.DataFrame,
-        reit_df: Optional[pd.DataFrame] = None,
+        reit_df: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """
         Calculate market strength score using multiplicative sentiment approach.
@@ -441,9 +441,9 @@ class MarketStrengthModel:
 def score_all_metros(
     metro_df: pd.DataFrame,
     national_df: pd.DataFrame,
-    reit_df: Optional[pd.DataFrame] = None,
-    max_sentiment_adj: Optional[float] = None,
-) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, float]]:
+    reit_df: pd.DataFrame | None = None,
+    max_sentiment_adj: float | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
     """
     Convenience function to score all metros with multiplicative sentiment.
 
@@ -477,7 +477,7 @@ def score_all_metros(
     return scores, features, sentiment
 
 
-def get_score_methodology() -> Dict[str, any]:
+def get_score_methodology() -> dict[str, any]:
     """
     Return methodology details for UI display.
 
